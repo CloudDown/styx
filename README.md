@@ -1,11 +1,11 @@
 <h1 align="center">Styx</h1>
-<p align="center">Retrouvez votre interface Hermes dans Tor Browser.<br>Une adresse onion, un mot de passe. Aucun port ouvert sur le réseau local.</p>
+<p align="center">Access your Hermes web UI through Tor Browser.<br>One onion address, one password. No ports exposed to your local network.</p>
 
-<p align="center"><img src="docs/login.png" width="100%" alt="Page de connexion Styx : un champ de mot de passe sur une peinture mythologique, avec Cerbère au bord du Styx." /></p>
+<p align="center"><img src="docs/login.png" width="100%" alt="Styx login page: a password field over a mythological painting, with Cerberus by the river Styx." /></p>
 
-## Installation
+## Install
 
-Sur la machine qui héberge Hermes : **Linux** (noyau 5.3+), **Hermes ≥ 0.22.0**, Git et `tor` (`sudo apt install tor` ou `sudo pacman -S tor`). Pour vous connecter, utilisez [Tor Browser](https://www.torproject.org/).
+On the machine running Hermes, you need **Linux** (kernel 5.3+), **Hermes ≥ 0.22.0**, Git and `tor` (`sudo apt install tor` or `sudo pacman -S tor`). Use [Tor Browser](https://www.torproject.org/) to connect.
 
 ```bash
 mkdir -p "${HERMES_HOME:-$HOME/.hermes}/plugins"
@@ -13,52 +13,52 @@ git clone https://github.com/CloudDown/styx.git "${HERMES_HOME:-$HOME/.hermes}/p
 hermes plugins enable styx
 ```
 
-## 1. Choisir un mot de passe
+## 1. Set a password
 
 ```bash
 hermes styx passwd
 ```
 
-Cerberus garde l'accès à l'interface. Choisissez une phrase de passe longue et unique.
+Cerberus guards access to the interface. Choose a long, unique passphrase.
 
-## 2. Ouvrir le passage
+## 2. Open the passage
 
 ```bash
 hermes styx start
 hermes styx url
 ```
 
-Styx active la webapp et démarre ou redémarre la passerelle Hermes si nécessaire. Copiez l'adresse affichée **dans Tor Browser**, puis entrez votre mot de passe. Gardez la machine allumée ; Tor peut ajouter de la latence.
+Styx enables the webapp and starts or restarts the Hermes gateway if needed. Copy the displayed address **into Tor Browser**, then enter your password. Keep the host machine awake; Tor can add latency.
 
-L'adresse reste la même après un arrêt et un redémarrage. Gardez-la privée, même si le mot de passe reste nécessaire pour entrer.
+Your address stays the same across stops and restarts. Keep it private, even though a password is still required to get in.
 
-## 3. Fermer
+## 3. Close it
 
 ```bash
 hermes styx stop
 ```
 
-Seuls Tor et Cerberus s'arrêtent. Hermes et ses bots continuent de fonctionner.
+Only Tor and Cerberus stop. Hermes and its bots keep running.
 
-## Au quotidien
+## Everyday use
 
-| Action | Commande |
+| Action | Command |
 |---|---|
-| Vérifier l'état sur l'hôte | `hermes styx status` |
-| Diagnostiquer un problème | `hermes styx doctor` |
-| Changer le mot de passe | `hermes styx passwd` |
-| Vérifier depuis le chat, sans afficher l'adresse | `/styx` |
+| Check status on the host | `hermes styx status` |
+| Diagnose a problem | `hermes styx doctor` |
+| Change your password | `hermes styx passwd` |
+| Check from chat without revealing the address | `/styx` |
 
-L'onglet **Styx** du dashboard permet aussi de démarrer, arrêter et copier l'adresse. L'indicateur Desktop est facultatif, dans **Capabilities → Plugins**.
+The dashboard's **Styx** tab also lets you start, stop and copy the address. The Desktop status chip is opt-in, under **Capabilities → Plugins**.
 
-Pour exiger en plus une clé Tor par appareil, consultez le [guide](docs/GUIDE.md#clé-tor-par-appareil).
+To require a per-device Tor key in addition to the password, see the [guide (French)](docs/GUIDE.md#clé-tor-par-appareil).
 
-## Accès et confidentialité
+## Access and privacy
 
-Une session donne les droits de l'utilisateur système qui exécute Hermes, **y compris le shell, les fichiers et les clés**. Ne partagez l'accès qu'avec une personne à qui vous confieriez ce compte.
+A session grants the permissions of the OS user running Hermes, **including shell access, files and keys**. Only share access with someone you would trust with that account.
 
-Hermes et Cerberus écoutent uniquement en local. Tor publie le point d'entrée ; aucun port n'est exposé sur le LAN. La page de connexion ne charge aucune ressource externe. Les tentatives de connexion sont limitées globalement.
+Hermes and Cerberus listen only on loopback. Tor publishes the entry point; no port is exposed to the LAN. The login page loads no external resources. Login attempts share a global rate limit.
 
-Changer le mot de passe révoque les sessions : nouvelle connexion à la prochaine requête HTTP, fermeture des WebSockets sous une seconde. Ne définissez pas `webapp.public_url` avec l'adresse onion : Styx gère l'authentification.
+Changing the password revokes existing sessions: the next HTTP request requires a new login, and open WebSockets close within one second. Do not set `webapp.public_url` to the onion address: Styx handles authentication.
 
-Configuration, mises à jour et tests : [guide](docs/GUIDE.md) · [Licence MIT](LICENSE).
+Configuration, updates and tests: [guide (French)](docs/GUIDE.md) · [MIT license](LICENSE).

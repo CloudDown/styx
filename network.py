@@ -38,7 +38,8 @@ def upstream_health(host: str, port: int) -> tuple[bool, str | None]:
             return False, "upstream port is not configured"
         connection = http.client.HTTPConnection(host, port, timeout=2)
         try:
-            connection.request("GET", "/", headers={"Origin": f"http://{connection.host}:{port}"})
+            authority = f"[{host}]" if ":" in host else host
+            connection.request("GET", "/", headers={"Origin": f"http://{authority}:{port}"})
             response = connection.getresponse()
             body = response.read(65536)
             if b"The Webapp is not built" in body or b"Hermes is unavailable" in body:

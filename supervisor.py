@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import subprocess
@@ -16,6 +15,7 @@ from . import paths
 from . import tor_supervisor as tor
 from .network import port_open, require_loopback, upstream_health, wait_port
 from .storage import write_private
+from .platform_support import detached_process_options, lock_exclusive, private_dir
 
 
 class StyxError(RuntimeError):
@@ -128,11 +128,11 @@ def start(
 
 @contextmanager
 def _operation_lock(root: Path):
-    root.mkdir(parents=True, exist_ok=True)
-    fd = os.open(root / "supervisor.lock", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+    private_dir(root)
+    fd = os.open(root / "supervisor.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0), 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(fd)
         except BlockingIOError as exc:
             raise StyxError("another Styx start/stop operation is in progress; retry shortly") from exc
         yield
@@ -146,7 +146,7 @@ def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gate
     if not pw.read_hash(paths.passwd_path(root)):
         raise StyxError("no passphrase — run: hermes styx passwd")
     if not tor.tor_binary():
-        raise StyxError("tor is not installed")
+        raise StyxError("Tor is missing — install Tor and add it to PATH, or set STYX_TOR_BINARY (see README)")
     try:
         up_host, up_port = ensure_upstream(target_name(), may_restart=may_restart_gateway, data_dir=root)
     except RuntimeError as exc:
@@ -231,7 +231,7 @@ def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int) -> subproces
             stdin=subprocess.DEVNULL,
             stdout=log_f,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **detached_process_options(),
             close_fds=True,
             cwd=str(paths.PLUGIN_ROOT),
             env=env,

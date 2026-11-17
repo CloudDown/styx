@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import os
 import unittest
 from pathlib import Path
 
@@ -27,7 +28,8 @@ class Passwords(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             dest = Path(raw) / "passwd"
             passwords.write_hash(dest, "cerberus-gate-99")
-            self.assertEqual(dest.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":
+                self.assertEqual(dest.stat().st_mode & 0o777, 0o600)
             stored = passwords.read_hash(dest)
             self.assertTrue(stored)
             self.assertTrue(passwords.verify_password("cerberus-gate-99", stored))

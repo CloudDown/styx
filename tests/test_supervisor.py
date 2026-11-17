@@ -133,7 +133,7 @@ class Supervisor(unittest.TestCase):
     def test_pid_for_an_unrelated_process_is_never_signalled(self):
         pidfile = paths.gate_pid_path(self.root)
         pidfile.write_text(str(os.getpid()))
-        with patch.object(tor.signal, "pidfd_send_signal") as signal:
+        with patch.object(tor.signal, "pidfd_send_signal", create=True) as signal:
             tor.stop_pid(pidfile, name="gate")
         signal.assert_not_called()
         self.assertFalse(pidfile.exists())
@@ -165,6 +165,7 @@ class Supervisor(unittest.TestCase):
                     tor.write_pid(pidfile, 12345)
         self.assertFalse(pidfile.exists())
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux pidfd-specific check")
     def test_identity_is_rechecked_after_pinning_pid(self):
         pidfile = paths.gate_pid_path(self.root)
         pidfile.write_text("12345")
@@ -177,6 +178,14 @@ class Supervisor(unittest.TestCase):
         signal.assert_not_called()
 
     def test_real_gate_pid_can_be_stopped_without_touching_identity(self):
+        self._assert_gate_lifecycle()
+
+    @unittest.skipUnless(sys.platform == "linux", "Also exercise psutil lifecycle on Linux")
+    def test_real_gate_portable_lifecycle(self):
+        with patch.object(tor, "_IS_LINUX", False):
+            self._assert_gate_lifecycle()
+
+    def _assert_gate_lifecycle(self):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]

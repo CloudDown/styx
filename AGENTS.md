@@ -17,7 +17,7 @@ Tor Browser → http://<v3>.onion
 
 - Bind **loopback only**. Refuse non-loopback in `gate.py`.
 - Do **not** set `webapp.public_url` to the onion (Hermes DNS-rebinding + login gate). Styx owns auth.
-- `hermes styx start` enables `webapp.enabled` and `gateway ensure` / `restart --interrupt --detach` if 9120 is down (`webapp_ensure.py`). `stop` kills tor+gate only — never the Hermes gateway (bots).
+- `hermes styx start` runs public `hermes webapp --build-only` (freshness/build owned by Hermes), enables `webapp.enabled` and `gateway ensure` / `restart --interrupt --detach` if 9120 is down (`webapp_ensure.py`). Verify HTTP, not only TCP. `stop` kills tor+gate only — never the Hermes gateway (bots).
 - Onion identity is `$HERMES_HOME/plugin-data/styx/hidden_service/`. **Never delete it on stop.** Same keys → same `.onion` after restart.
 - `/styx` slash: up/down only, never the URL. URL = `hermes styx url` on the host.
 
@@ -34,6 +34,7 @@ Tor Browser → http://<v3>.onion
 | `headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
 | `network.py` | shared loopback validation and port readiness helpers |
 | `storage.py` | atomic 0600 writes for passwords, state and process identities |
+| `platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
 | `login_page.py` | minimal glass password field + local painting embedded as data URI, **no external assets** |
 | `passwords.py` | scrypt; empty refused; **no min length** |
 | `sessions.py` | HMAC cookie `styx_session`, 12h; key derived from current password hash |
@@ -72,8 +73,17 @@ No pytest in the Hermes venv — use stdlib `unittest`.
   WebSockets within one second. Do not cache the password hash at gate startup.
 - Proxy responses stay raw: preserve Content-Encoding/Length and duplicate
   Set-Cookie headers. WebSocket handshake headers belong to the upstream client.
-- Start/stop share a non-blocking process lock. PID files carry process identity;
-  legacy integers require command/profile checks. Signals use Linux pidfds.
+- Start/stop share a non-blocking native process lock. PID files carry process
+  identity; legacy integers require command/profile checks. Linux keeps pidfds;
+  macOS/Windows and older Linux use psutil guarded process operations. Never
+  replace these checks with a bare PID signal or `os.kill(pid, 0)` on Windows.
+- Platforms: linux/darwin/win32. Native Windows secrets need protected ACLs,
+  not just chmod. Tor is an explicit external prerequisite (PATH or
+  STYX_TOR_BINARY); no silent system-package install/download.
+- Startup prepares the webapp through the public CLI, logs build errors to
+  logs/webapp-build.log, and rejects missing/stale-interface HTTP responses.
+- Native Windows/macOS CI is in .github/workflows/tests.yml. Do not claim those
+  jobs passed unless they actually ran successfully.
 - `client-auth` is opt-in (`--client-auth` after `hermes styx client-auth`).
 - Session = OS user of Hermes (shell, files, keys). Treat like Web Access.
 

@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
 import select
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
+import psutil
+
 from . import paths
+from .platform_support import detached_process_options
 from .storage import write_private
+
+_IS_LINUX = sys.platform == "linux"
 
 
 class TorError(RuntimeError):
@@ -24,8 +31,25 @@ class TorStartupTimeout(TorError):
 
 
 def tor_binary() -> str | None:
+    configured = os.environ.get("STYX_TOR_BINARY")
+    if configured:
+        candidate = Path(configured).expanduser()
+        return str(candidate.resolve()) if candidate.is_file() and os.access(candidate, os.X_OK) else None
     found = shutil.which("tor")
-    return found
+    if found:
+        return found
+    if sys.platform == "darwin":
+        for raw in ("/opt/homebrew/bin/tor", "/usr/local/bin/tor"):
+            if os.path.isfile(raw) and os.access(raw, os.X_OK):
+                return raw
+    return None
+
+
+def _tor_path(path: Path) -> str:
+    value = path.resolve().as_posix()
+    if "\r" in value or "\n" in value:
+        raise TorError("Tor state paths cannot contain newlines")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def render_torrc(
@@ -43,12 +67,12 @@ def render_torrc(
     hs_dir = paths.hidden_service_dir(data_dir)
     log_path = paths.tor_log_path(data_dir)
     lines = [
-        f"DataDirectory {tor_dir}",
+        f"DataDirectory {_tor_path(tor_dir)}",
         "SocksPort 0",
         "AvoidDiskWrites 0",
         "SafeLogging 1",
-        f"Log notice file {log_path}",
-        f"HiddenServiceDir {hs_dir}",
+        f"Log notice file {_tor_path(log_path)}",
+        f"HiddenServiceDir {_tor_path(hs_dir)}",
         "HiddenServiceVersion 3",
         f"HiddenServicePort 80 127.0.0.1:{int(gate_port)}",
     ]
@@ -70,8 +94,7 @@ def write_torrc(data_dir: Path, gate_port: int, client_auth: bool) -> Path:
             )
     text = render_torrc(data_dir=data_dir, gate_port=gate_port, client_auth=client_auth)
     dest = paths.torrc_path(data_dir)
-    dest.write_text(text, encoding="utf-8")
-    dest.chmod(0o600)
+    write_private(dest, text)
     hs = paths.hidden_service_dir(data_dir)
     os.chmod(hs, 0o700)
     return dest
@@ -80,7 +103,10 @@ def write_torrc(data_dir: Path, gate_port: int, client_auth: bool) -> Path:
 def start_tor(data_dir: Path, gate_port: int, *, client_auth: bool = False) -> subprocess.Popen:
     binary = tor_binary()
     if not binary:
-        raise TorError("tor is not installed (apt install tor / pacman -S tor)")
+        raise TorError(
+            "Tor is missing: install tor (Linux), brew install tor (macOS), or the Tor Expert Bundle "
+            "(Windows); put it on PATH or set STYX_TOR_BINARY to its full executable path"
+        )
     torrc = write_torrc(data_dir, gate_port, client_auth)
     log = paths.tor_log_path(data_dir)
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +116,7 @@ def start_tor(data_dir: Path, gate_port: int, *, client_auth: bool = False) -> s
             stdin=subprocess.DEVNULL,
             stdout=log_f,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **detached_process_options(),
             close_fds=True,
         )
     try:
@@ -127,6 +153,41 @@ def read_hostname(data_dir: Path) -> str | None:
 
 
 def _process_info(pid: int, path: Path) -> dict | None:
+    if _IS_LINUX:
+        return _linux_process_info(pid, path)
+    return _portable_process_info(pid, path)
+
+
+def _matches_command(argv: list[str], path: Path) -> bool:
+    root = path.parent.resolve()
+    if path.name == "gate.pid":
+        marker, expected = "--data-dir", root
+        if not any(argv[i:i + 2] == ["-m", "styx.gate"] for i in range(len(argv) - 1)):
+            return False
+    elif path.name == "tor.pid" and Path(argv[0]).name.lower() in {"tor", "tor.exe"}:
+        marker, expected = "-f", paths.torrc_path(root)
+    else:
+        return False
+    index = argv.index(marker)
+    return Path(argv[index + 1]).resolve() == expected
+
+
+def _portable_process_info(pid: int, path: Path) -> dict | None:
+    try:
+        process = psutil.Process(pid)
+        owner = process.username()
+        if owner.casefold() != psutil.Process().username().casefold():
+            return None
+        if process.status() in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}:
+            return None
+        if not _matches_command(process.cmdline(), path) or not process.is_running():
+            return None
+        return {"pid": pid, "create_time": process.create_time(), "username": owner}
+    except (psutil.Error, OSError, ValueError, IndexError):
+        return None
+
+
+def _linux_process_info(pid: int, path: Path) -> dict | None:
     """Match the service, profile, uid and Linux process birth identity."""
     if pid <= 0:
         return None
@@ -138,17 +199,7 @@ def _process_info(pid: int, path: Path) -> dict | None:
         if fields[0] == "Z":
             return None
         argv = (proc / "cmdline").read_bytes().decode().strip("\0").split("\0")
-        root = path.parent.resolve()
-        if path.name == "gate.pid":
-            marker, expected = "--data-dir", root
-            if not any(argv[i:i + 2] == ["-m", "styx.gate"] for i in range(len(argv) - 1)):
-                return None
-        elif path.name == "tor.pid" and Path(argv[0]).name == "tor":
-            marker, expected = "-f", paths.torrc_path(root)
-        else:
-            return None
-        index = argv.index(marker)
-        if Path(argv[index + 1]).resolve() != expected:
+        if not _matches_command(argv, path):
             return None
         return {
             "pid": pid, "start_time": fields[19],
@@ -187,12 +238,18 @@ def stop_pid(path: Path, *, name: str = "process") -> None:
     if pid is None:
         path.unlink(missing_ok=True)
         return
+    if not _IS_LINUX or not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        _stop_portable(path, pid, name)
+        return
     try:
         fd = os.pidfd_open(pid)
     except ProcessLookupError:
         path.unlink(missing_ok=True)
         return
-    except (AttributeError, OSError) as exc:
+    except OSError as exc:
+        if exc.errno in {errno.ENOSYS, errno.EINVAL}:
+            _stop_portable(path, pid, name)
+            return
         raise TorError(f"cannot safely stop {name}: Linux pidfd support is required") from exc
     try:
         # The fd pins this exact process, so PID reuse cannot redirect a signal.
@@ -214,6 +271,25 @@ def stop_pid(path: Path, *, name: str = "process") -> None:
         path.unlink(missing_ok=True)
     finally:
         os.close(fd)
+
+
+def _stop_portable(path: Path, pid: int, name: str) -> None:
+    try:
+        process = psutil.Process(pid)
+        # psutil's signalling methods check its cached creation time against
+        # PID reuse; never use os.kill(pid, 0), which terminates on Windows.
+        if read_pid(path) == pid and process.is_running():
+            process.terminate()
+            try:
+                process.wait(timeout=4)
+            except psutil.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
+        path.unlink(missing_ok=True)
+    except psutil.NoSuchProcess:
+        path.unlink(missing_ok=True)
+    except psutil.Error as exc:
+        raise TorError(f"cannot safely stop {name}: {type(exc).__name__}") from exc
 
 
 def terminate_child(proc: subprocess.Popen) -> None:

@@ -43,7 +43,14 @@ class ProxyAndTorrc(unittest.TestCase):
             self.assertIn("SocksPort 0", text)
             self.assertIn("HiddenServiceVersion 3", text)
             self.assertIn("HiddenServicePort 80 127.0.0.1:9130", text)
-            self.assertIn(str(tmp / "hidden_service"), text)
+            self.assertIn((tmp / "hidden_service").resolve().as_posix(), text)
+
+    def test_torrc_quotes_paths_with_spaces(self):
+        with tempfile.TemporaryDirectory(prefix="styx space ") as raw:
+            root = Path(raw)
+            text = render_torrc(data_dir=root, gate_port=9130, client_auth=False)
+            self.assertIn(f'DataDirectory "{(root / "tor").resolve().as_posix()}"', text)
+            self.assertIn(f'HiddenServiceDir "{(root / "hidden_service").resolve().as_posix()}"', text)
 
     def test_connection_nominated_headers_are_removed_in_both_directions(self):
         incoming = [("Connection", "keep-alive, X-Private"), ("X-Private", "no"), ("Accept", "yes")]

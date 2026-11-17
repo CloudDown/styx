@@ -9,20 +9,22 @@ import secrets
 import time
 from pathlib import Path
 
+from .platform_support import private_dir
+from .storage import write_private
+
 COOKIE = "styx_session"
 CSRF_COOKIE = "styx_csrf"
 TTL_SECONDS = 12 * 60 * 60
 
 
 def load_or_create_key(path: Path) -> bytes:
+    private_dir(path.parent)
     if path.is_file():
         key = path.read_bytes()
         if len(key) >= 32:
             return key
-    path.parent.mkdir(parents=True, exist_ok=True)
     key = os.urandom(32)
-    path.write_bytes(key)
-    path.chmod(0o600)
+    write_private(path, key)
     return key
 
 

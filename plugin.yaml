@@ -9,6 +9,10 @@ license: MIT
 kind: standalone
 platforms:
   - linux
+  - darwin
+  - win32
+python_dependencies:
+  - "psutil>=5.9; sys_platform == 'linux' or sys_platform == 'darwin' or sys_platform == 'win32'"
 requires_hermes: ">=0.22.0"
 tags: [tor, onion, remote, webapp, privacy]
 provides_tools: []

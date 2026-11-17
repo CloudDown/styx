@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .platform_support import private_dir
+
 PLUGIN_ID = "styx"
 PLUGIN_ROOT = Path(__file__).resolve().parent
 
@@ -13,10 +15,10 @@ def data_dir() -> Path:
     from plugins.plugin_storage import plugin_data_dir
 
     root = plugin_data_dir(PLUGIN_ID)
-    root.mkdir(parents=True, exist_ok=True)
+    private_dir(root)
     (root / "logs").mkdir(exist_ok=True)
     (root / "tor").mkdir(exist_ok=True)
-    (root / "hidden_service").mkdir(mode=0o700, exist_ok=True)
+    private_dir(root / "hidden_service")
     return root
 
 
@@ -38,13 +40,13 @@ def tor_data_dir(root: Path | None = None) -> Path:
 
 def hidden_service_dir(root: Path | None = None) -> Path:
     d = (root or data_dir()) / "hidden_service"
-    d.mkdir(mode=0o700, exist_ok=True)
+    private_dir(d)
     return d
 
 
 def authorized_clients_dir(root: Path | None = None) -> Path:
     d = hidden_service_dir(root) / "authorized_clients"
-    d.mkdir(mode=0o700, exist_ok=True)
+    private_dir(d)
     return d
 
 

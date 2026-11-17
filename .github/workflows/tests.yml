@@ -1,0 +1,24 @@
+name: Portable backend tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: styx
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test dependencies
+        run: python -m pip install "httpx>=0.28,<1" "starlette>=0.47,<2" "uvicorn>=0.35,<1" "websockets>=15,<16" "cryptography>=44" "psutil>=5.9"
+      - name: Test native process, file and proxy behavior
+        working-directory: styx
+        run: python -m unittest discover -s tests -v

@@ -5,13 +5,26 @@
 
 ## Install
 
-On the machine running Hermes, you need **Linux** (kernel 5.3+), **Hermes ≥ 0.22.0**, Git and `tor` (`sudo apt install tor` or `sudo pacman -S tor`). Use [Tor Browser](https://www.torproject.org/) to connect.
+On the machine running Hermes, you need **Hermes ≥ 0.22.0**, Git and **Tor**. The plugin targets Linux, macOS and native Windows; Linux is tested locally, while native macOS/Windows validation runs through the added CI matrix. Use [Tor Browser](https://www.torproject.org/) to connect.
+
+Install Tor with `apt install tor` / `pacman -S tor` on Linux, `brew install tor` on macOS, or the **Tor Expert Bundle** on Windows. Put `tor` / `tor.exe` on `PATH`, or set `STYX_TOR_BINARY` to its full executable path. Styx does not silently install system packages or download Tor.
 
 ```bash
 mkdir -p "${HERMES_HOME:-$HOME/.hermes}/plugins"
 git clone https://github.com/CloudDown/styx.git "${HERMES_HOME:-$HOME/.hermes}/plugins/styx"
 hermes plugins enable styx
 ```
+
+On Windows (PowerShell), use:
+
+```powershell
+$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $HOME ".hermes" }
+New-Item -ItemType Directory -Force (Join-Path $HermesHome "plugins")
+git clone https://github.com/CloudDown/styx.git (Join-Path $HermesHome "plugins/styx")
+hermes plugins enable styx
+```
+
+Windows state must be on a filesystem supporting private ACLs (normally NTFS). The manifest declares `psutil`, already included in current Hermes, for portable process management.
 
 ## 1. Set a password
 
@@ -28,7 +41,9 @@ hermes styx start
 hermes styx url
 ```
 
-Styx enables the webapp and starts or restarts the Hermes gateway if needed. Copy the displayed address **into Tor Browser**, then enter your password. Keep the host machine awake; Tor can add latency.
+Styx asks Hermes to prepare the webapp (reusing a fresh bundle or building a missing/outdated one), enables it, and starts or restarts the gateway if needed. It checks the actual HTTP response, not merely an open port. Copy the displayed address **into Tor Browser**, then enter your password. Keep the host machine awake; Tor can add latency.
+
+Rebuilding an interface on a running gateway does not restart Hermes or its bots. Build errors point to `plugin-data/styx/logs/webapp-build.log`; startup does not report success with a missing-interface error page.
 
 Your address stays the same across stops and restarts. Keep it private, even though a password is still required to get in.
 

@@ -40,6 +40,9 @@ class LoginAndSessions(unittest.TestCase):
 
     def test_login_initial_state_has_no_error(self):
         html = login_page.render()
+        self.assertIn('placeholder="Password"', html)
+        self.assertIn('aria-label="Password"', html)
+        self.assertNotIn("Mot de passe", html)
         self.assertNotIn('role="alert"', html)
         self.assertNotIn('aria-invalid="true"', html)
 

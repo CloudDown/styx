@@ -112,8 +112,8 @@ def render(error: str = "", csrf: str = "") -> str:
     <input type="hidden" name="csrf" value="{csrf_e}">
     <div class="field">
       <input id="password" name="password" type="password" required
-             autocomplete="current-password" aria-label="Mot de passe"
-             placeholder="Mot de passe"{error_attrs}>
+             autocomplete="current-password" aria-label="Password"
+             placeholder="Password"{error_attrs}>
       <button type="submit" aria-label="Se connecter">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"

@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import hmac
 import logging
+import re
 import sys
 import time
 from collections import deque
@@ -30,6 +31,7 @@ from . import passwords
 from . import paths
 from . import sessions
 from .network import require_loopback
+from .webapp_handoff import ENTRY_QUERY, HandoffError, WebappHandoff, strip_entry_query
 
 log = logging.getLogger("styx.gate")
 
@@ -83,7 +85,8 @@ class _ProxyResponse(StreamingResponse):
             await self.upstream.aclose()
 
 
-def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes) -> Starlette:
+def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes,
+              webapp_handoff: bool = False) -> Starlette:
     require_loopback(upstream_host)
     passwd_file = paths.passwd_path(data_dir)
     if not passwords.read_hash(passwd_file):
@@ -100,6 +103,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     upstream_base = str(httpx.URL(scheme="http", host=upstream_host, port=upstream_port)).rstrip("/")
     limiter = _LoginLimiter()
     hash_slots = asyncio.Semaphore(2)
+    handoff = WebappHandoff(upstream_host, upstream_port) if webapp_handoff else None
 
     def auth_key() -> bytes | None:
         stored = passwords.read_hash(passwd_file)
@@ -109,9 +113,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         key = auth_key()
         return key is not None and sessions.valid(key, connection.cookies.get(sessions.COOKIE))
 
-    def login_response(error: str = "", status_code: int = 200) -> Response:
-        csrf = sessions.new_csrf()
+    def login_response(error: str = "", status_code: int = 200, *, csrf: str | None = None) -> Response:
+        csrf = csrf or sessions.new_csrf()
         resp = HTMLResponse(login_page.render(error=error, csrf=csrf), status_code=status_code)
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "no-referrer"
         resp.set_cookie(
             sessions.CSRF_COOKIE, csrf, httponly=True, samesite="lax",
             max_age=600, path="/login",
@@ -139,7 +145,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     async def login_get(request: Request) -> Response:
         if authed(request):
             return RedirectResponse("/", status_code=303)
-        return login_response()
+        csrf = request.cookies.get(sessions.CSRF_COOKIE) or ""
+        # Repeated GETs / another login tab must not invalidate an open form.
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32}", csrf):
+            csrf = None
+        return login_response(csrf=csrf)
 
     async def login_post(request: Request) -> Response:
         delay = limiter.reserve()
@@ -179,7 +189,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         finally:
             limiter.finish(success)
         nxt = request.query_params.get("next") or "/"
-        if not nxt.startswith("/") or nxt.startswith("//"):
+        if not nxt.startswith("/") or nxt.startswith(("//", "/\\")):
             nxt = "/"
         resp = RedirectResponse(nxt, status_code=303)
         resp.set_cookie(
@@ -196,13 +206,35 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
 
     async def proxy_http(request: Request) -> Response:
         if not authed(request):
+            if request.url.path == "/favicon.ico":
+                # Browsers ask for this automatically; do not redirect a
+                # background image request into the login/CSRF flow.
+                return Response(status_code=204)
             dest = request.url.path
             if request.url.query:
                 dest += "?" + request.url.query
             return RedirectResponse("/login?" + urlencode({"next": dest}), status_code=303)
+        query = request.url.query
+        if handoff and request.method == "GET" and request.url.path == "/":
+            session = request.cookies.get(sessions.COOKIE) or ""
+            if not handoff.consume(request.query_params.get(ENTRY_QUERY), session):
+                try:
+                    target = await handoff.launch(session, query)
+                except HandoffError as exc:
+                    return HTMLResponse(str(exc), status_code=503, headers={
+                        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                    })
+                # The password may have changed while the host CLI ran.
+                if not authed(request):
+                    return RedirectResponse("/login", status_code=303)
+                if target:
+                    return RedirectResponse(target, status_code=303, headers={
+                        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                    })
+            query = strip_entry_query(query)
         url = upstream_base + request.url.path
-        if request.url.query:
-            url += "?" + request.url.query
+        if query:
+            url += "?" + query
         req_headers = hdrs.outbound_headers(
             request.headers, upstream_host=upstream_host, upstream_port=upstream_port,
         )
@@ -327,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--upstream-port", type=int, required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--bind", default="127.0.0.1")
+    parser.add_argument("--webapp-handoff", action="store_true")
     args = parser.parse_args(argv)
     from pathlib import Path
 
@@ -340,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
         upstream_host=args.upstream_host,
         upstream_port=args.upstream_port,
         secret=secret,
+        webapp_handoff=args.webapp_handoff,
     )
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     uvicorn.run(app, host=args.bind, port=args.port, log_level="warning", access_log=False, workers=1)

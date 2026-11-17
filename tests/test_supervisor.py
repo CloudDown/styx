@@ -105,6 +105,21 @@ class Supervisor(unittest.TestCase):
         self.spawn.assert_not_called()
         self.stop_pid.assert_not_called()
 
+    def test_legacy_running_gate_is_upgraded_to_the_native_browser_handoff(self):
+        self.mock_start()
+        self.current.update(running=True, onion="synthetic", gate_pid=123, tor_pid=456)
+        supervisor.start(data_dir=self.root)
+        self.assertTrue(self.spawn.call_args.kwargs["webapp_handoff"])
+        self.assertTrue(supervisor.read_state(self.root)["webapp_handoff"])
+        self.assert_cleaned()
+
+    def test_current_handoff_gate_is_not_restarted_on_repeated_start(self):
+        self.mock_start()
+        self.current.update(running=True, onion="synthetic", gate_pid=123, tor_pid=456, webapp_handoff=True)
+        supervisor.start(data_dir=self.root)
+        self.spawn.assert_not_called()
+        self.stop_pid.assert_not_called()
+
     def test_start_and_stop_are_exclusive_even_across_threads(self):
         entered, release = threading.Event(), threading.Event()
         def starting(*args, **kwargs):

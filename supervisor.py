@@ -104,6 +104,7 @@ def status(data_dir: Path | None = None) -> dict[str, Any]:
         "upstream_ok": upstream_ok,
         "upstream_error": upstream_error,
         "target": st.get("target") or target_name(),
+        "webapp_handoff": bool(st.get("webapp_handoff")),
         "password_set": pw.read_hash(paths.passwd_path(root)) is not None,
         "tor_binary": tor.tor_binary(),
         "client_auth": bool(st.get("client_auth")),
@@ -146,16 +147,17 @@ def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gate
     if not pw.read_hash(paths.passwd_path(root)):
         raise StyxError("no passphrase — run: hermes styx passwd")
     if not tor.tor_binary():
-        raise StyxError("Tor is missing — install Tor and add it to PATH, or set STYX_TOR_BINARY (see README)")
+        raise StyxError("Tor is missing — run hermes styx setup in a host terminal, or set STYX_TOR_BINARY")
+    target = target_name()
     try:
-        up_host, up_port = ensure_upstream(target_name(), may_restart=may_restart_gateway, data_dir=root)
+        up_host, up_port = ensure_upstream(target, may_restart=may_restart_gateway, data_dir=root)
     except RuntimeError as exc:
         raise StyxError(str(exc)) from exc
     current = status(root)
     gport = gate_port()
     if current["running"] and current.get("onion") and (
         current["gate_port"], current["upstream_host"], current["upstream_port"], current["client_auth"]
-    ) == (gport, up_host, up_port, client_auth):
+    ) == (gport, up_host, up_port, client_auth) and current.get("webapp_handoff", False) == (target == "webapp"):
         return current
     if current["gate_pid"] or current["tor_pid"]:
         _stop_locked(root)
@@ -165,7 +167,7 @@ def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gate
     if port_open("127.0.0.1", gport):
         raise StyxError(f"gate port 127.0.0.1:{gport} is already occupied")
     try:
-        gate_proc = _spawn_gate(root, up_host, up_port, gport)
+        gate_proc = _spawn_gate(root, up_host, up_port, gport, webapp_handoff=(target == "webapp"))
         if not wait_port("127.0.0.1", gport, timeout=8.0) or gate_proc.poll() is not None:
             raise StyxError(f"gate did not bind 127.0.0.1:{gport} — see {paths.gate_log_path(root)}")
         tor.start_tor(root, gport, client_auth=client_auth)
@@ -179,7 +181,8 @@ def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gate
             "gate_port": gport,
             "upstream_host": up_host,
             "upstream_port": up_port,
-            "target": target_name(),
+            "target": target,
+            "webapp_handoff": target == "webapp",
             "client_auth": client_auth,
             "started_at": datetime.now(UTC).isoformat(),
             "onion": onion,
@@ -211,7 +214,8 @@ def _stop_locked(root: Path) -> None:
         raise StyxError("; ".join(errors))
 
 
-def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int) -> subprocess.Popen:
+def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int, *,
+                webapp_handoff: bool = False) -> subprocess.Popen:
     parent = str(paths.PLUGIN_ROOT.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = parent + os.pathsep + env.get("PYTHONPATH", "")
@@ -227,7 +231,7 @@ def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int) -> subproces
                 "--upstream-port", str(up_port),
                 "--port", str(gport),
                 "--bind", "127.0.0.1",
-            ],
+            ] + (["--webapp-handoff"] if webapp_handoff else []),
             stdin=subprocess.DEVNULL,
             stdout=log_f,
             stderr=subprocess.STDOUT,
@@ -237,7 +241,7 @@ def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int) -> subproces
             env=env,
         )
     try:
-        tor.write_pid(paths.gate_pid_path(root), proc.pid)
+        tor.write_pid(paths.gate_pid_path(root), proc.pid, process=proc)
     except BaseException:
         tor.terminate_child(proc)
         raise

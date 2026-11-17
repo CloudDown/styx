@@ -20,19 +20,34 @@ Le démarrage automatique ne redémarre jamais la passerelle Hermes depuis laque
 
 Le démarrage vérifie ensuite la réponse HTTP réellement servie. Un port ouvert avec la page « The Webapp is not built » n'est plus considéré sain, y compris dans `doctor` et l'état du plugin. La compilation sur une passerelle déjà active ne la redémarre pas. Un échec ou un délai de compilation supérieur à quinze minutes donne une erreur et le chemin `logs/webapp-build.log`.
 
-Pour le premier lancement, installez Tor, choisissez un mot de passe et lancez `start` une fois. Ensuite, `autostart` peut préparer l'interface et attendre le listener de sa passerelle pendant son démarrage, mais ne redémarre jamais cette passerelle depuis l'intérieur.
+Pour le premier lancement, utilisez `hermes styx setup` dans un terminal de l'hôte. La commande propose l'installation de Tor s'il manque, demande un mot de passe si aucun n'est enregistré, prépare la webapp puis démarre Styx. `hermes styx start` effectue les mêmes vérifications : il peut donc servir de première commande sans étape supplémentaire.
+
+Avant l'installation, Styx affiche la commande et demande confirmation. Les mots de passe administrateur et les accords restent gérés par le gestionnaire de paquets, pas par Styx. Un refus ou un échec arrête le setup sans publier de service onion. Le plugin n'écrase jamais un mot de passe existant.
+
+Ensuite, `autostart` peut préparer l'interface et attendre le listener de sa passerelle pendant son démarrage, mais ne redémarre jamais cette passerelle depuis l'intérieur. Le démarrage depuis la passerelle, le dashboard/API et les terminaux non interactifs ne propose aucune installation système : effectuez le setup sur l'hôte au préalable.
+
+## Connexion automatique de l'onglet Hermes
+
+La webapp privée d'Hermes demande une autorisation par onglet, en plus de l'accès au proxy. Une fois la session Cerberus validée, Styx obtient un lien à usage unique avec la commande publique `hermes webapp --no-open --skip-build`, sans afficher ni journaliser sa sortie. Le navigateur passe par la page de lancement officielle d'Hermes, qui échange ce lien contre l'autorisation native conservée dans le `sessionStorage` de l'onglet.
+
+Styx ne lit pas de fichier de secret Hermes, ne désactive aucun contrôle d'authentification et ne modifie pas la webapp. Aucun lien n'est demandé pour une connexion Cerberus non authentifiée. Si un fournisseur de connexion Hermes supplémentaire a été configuré, son écran de connexion reste applicable.
+
+Un nouvel onglet ou un rechargement reçoit son propre passage de lancement. Le paramètre temporaire `_styx_entry` peut apparaître dans l'adresse : il évite une boucle de redirections et n'est pas l'autorisation Hermes. Il est à usage unique, lié à la session Cerberus et expire après deux minutes. L'adresse affichée par `hermes styx url` reste inchangée et sans ce paramètre.
+
+Les lancements sont limités en concurrence et en nombre de passages en attente. Les erreurs ou délais du lanceur donnent une réponse contrôlée plutôt qu'un accès non authentifié. `hermes styx start` remplace automatiquement un ancien gate qui ne gérait pas encore ce passage, sans redémarrer la passerelle ni supprimer l'identité onion.
 
 ## Linux, macOS et Windows
 
 Hermes gère son installation et la construction de sa webapp ; le plugin reste responsable du lancement de Tor, des verrous, de l'identification de ses processus et des permissions de ses secrets.
 
-- **Linux** : installez `tor` avec votre gestionnaire de paquets.
-- **macOS** : `brew install tor` ; les emplacements Homebrew usuels sont détectés.
-- **Windows natif** : installez le **Tor Expert Bundle**, puis ajoutez le répertoire de `tor.exe` au `PATH`. Vous pouvez aussi définir `STYX_TOR_BINARY` sur le chemin complet de l'exécutable, sur les trois OS.
+- **Linux** : le setup utilise le gestionnaire de la distribution (apt-get, pacman, dnf/yum, zypper ou apk) et sudo/doas si nécessaire. Il ne lance pas de mise à niveau complète du système.
+- **macOS** : le setup utilise Homebrew s'il est installé ; les emplacements Homebrew usuels sont détectés.
+- **Windows natif** : le setup préfère `scoop install tor` pour installer le Tor Expert Bundle. Sinon, winget propose **Tor Browser**, qui inclut Tor, en conservant les étapes interactives et les accords de l'installateur. Cette installation plus large est annoncée avant confirmation. Styx retrouve l'exécutable réel de Scoop/Tor Browser sans réutiliser un shim qui injecte une autre configuration Tor.
+- Pour une installation manuelle, ajoutez le répertoire de `tor` / `tor.exe` au `PATH` ou définissez `STYX_TOR_BINARY` sur le chemin complet de l'exécutable.
 - Le dossier doit conserver le nom `styx`. Le manifeste déclare `psutil`, déjà fourni par les versions actuelles d'Hermes, pour la gestion portable des processus.
 - Les secrets utilisent des permissions POSIX sur Linux/macOS et des ACL protégées utilisateur/SYSTEM sous Windows. Un système de fichiers Windows sans ACL privées n'est pas accepté ; `chmod` seul n'y protège pas les clés.
 
-Styx ne télécharge pas Tor et n'installe pas de paquet système silencieusement. Les dépendances de construction restent gérées par Hermes et une erreur d'installation doit être corrigée sur l'hôte. Le mode optionnel `target: dashboard` exige toujours le démarrage séparé du dashboard.
+Styx délègue l'installation au gestionnaire existant ; il n'installe pas Homebrew/Scoop et n'exécute pas de script distant téléchargé. Les dépendances de construction restent gérées par Hermes et une erreur d'installation doit être corrigée sur l'hôte. Le mode optionnel `target: dashboard` exige toujours le démarrage séparé du dashboard.
 
 ## Clé Tor par appareil
 
@@ -87,6 +102,8 @@ Tor Browser
 
 Tor utilise une instance dédiée avec `SocksPort 0` : ce n'est pas un proxy Tor général. Styx gère l'authentification sans définir `webapp.public_url` avec l'adresse onion.
 
+Les logs de Tor passent par stdout/stderr, redirigés vers `logs/tor.log` par Styx. Contrairement aux chemins `DataDirectory` et `HiddenServiceDir`, la directive Tor `Log ... file` n'enlève pas les guillemets d'un nom de fichier ; la redirection évite ce problème, y compris avec des espaces dans le chemin. Si un processus quitte avant l'enregistrement de son PID, l'erreur indique son code de sortie et son fichier de log.
+
 Les tentatives de connexion partagent un budget global de huit échecs ou vérifications en cours par fenêtre de quinze minutes. Les vérifications scrypt s'exécutent hors de la boucle événementielle, deux au maximum à la fois. Le corps d'une connexion est limité à 16 Kio et sa lecture à dix secondes.
 
 Les uploads et réponses du proxy sont transmis en flux. Le proxy préserve la compression, les en-têtes `Set-Cookie` distincts et la négociation des sous-protocoles WebSocket.
@@ -101,7 +118,9 @@ Gardez le nom de dossier `styx` : les imports du plugin et le lancement de Cerbe
 |---|---|
 | `plugin.yaml`, `__init__.py` | Manifeste et enregistrement Hermes. |
 | `cli.py`, `supervisor.py` | Commandes, démarrage et arrêt. |
+| `bootstrap.py` | Setup interactif et installation de Tor via le gestionnaire existant. |
 | `gate.py`, `headers.py` | Connexion et proxy HTTP/WebSocket. |
+| `webapp_handoff.py` | Passage vers l'autorisation native Hermes, par onglet et après Cerberus. |
 | `login_page.py`, `assets/` | Page de connexion autonome. |
 | `tor_supervisor.py`, `client_auth.py` | Service onion et autorisation Tor. |
 | `platform_support.py`, `storage.py`, `network.py` | Primitives portables, fichiers privés et contrôle HTTP. |
@@ -114,6 +133,6 @@ hermes --run-module unittest discover -s "$PWD/tests" -v
 hermes plugins validate "$PWD"
 ```
 
-Les tests utilisent des données temporaires et des serveurs HTTP/WebSocket locaux, jamais l'identité onion ni la passerelle en production.
+Les tests utilisent des données temporaires et des serveurs HTTP/WebSocket locaux, jamais l'identité onion ni la passerelle en production. Les installations sont simulées. Si Tor est déjà installé, un test supplémentaire démarre le vrai binaire avec `DisableNetwork 1`, dans un répertoire temporaire avec des espaces ; il ne contacte pas le réseau Tor.
 
 `.github/workflows/tests.yml` prépare l'exécution native sur Linux, macOS et Windows, avec Python 3.13 et 3.14, sans passerelle Hermes ni instance Tor réelle. Les tests couvrent notamment la compilation automatique, les réponses d'erreur HTTP, les processus, les verrous et les ACL Windows. Ajouter le workflow ne signifie pas que ces six jobs ont déjà été exécutés : les résultats natifs restent à vérifier en CI.

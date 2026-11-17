@@ -16,6 +16,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         help="Require a Tor client key (hermes styx client-auth) in addition to the password",
     )
     start.add_argument("--no-wait", action="store_true", help="Don't wait for the .onion hostname")
+    setup = subs.add_parser("setup", help="Install missing Tor with confirmation, set a password and start")
+    setup.add_argument("--client-auth", action="store_true", help="Require configured Tor client keys")
+    setup.add_argument("--no-wait", action="store_true", help="Don't wait for the .onion hostname")
     subs.add_parser("stop", help="Stop gate and Tor")
     subs.add_parser("url", help="Print the onion URL (secret)")
     pw = subs.add_parser("passwd", help="Set the Cerberus passphrase")
@@ -30,12 +33,12 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
 def styx_command(args: argparse.Namespace) -> int:
     cmd = args.styx_command
     if not cmd:
-        print("usage: hermes styx {status,start,stop,url,passwd,client-auth,doctor}")
+        print("usage: hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor}")
         return 2
     try:
         if cmd == "status":
             return _status()
-        if cmd == "start":
+        if cmd in {"start", "setup"}:
             return _start(
                 client_auth=bool(getattr(args, "client_auth", False)),
                 wait=not bool(getattr(args, "no_wait", False)),
@@ -81,9 +84,21 @@ def _status() -> int:
 
 def _start(*, client_auth: bool, wait: bool) -> int:
     from .supervisor import StyxError, start
+    from .bootstrap import SetupError, ensure_tor
+    from . import passwords, paths
+
     try:
+        ensure_tor()
+        if not passwords.read_hash(paths.passwd_path()):
+            if not sys.stdin.isatty():
+                raise SetupError("No passphrase set; run hermes styx setup in an interactive host terminal.")
+            try:
+                if _passwd(None):
+                    return 1
+            except EOFError as exc:
+                raise SetupError("Password setup cancelled.") from exc
         st = start(wait=wait, client_auth=client_auth)
-    except StyxError as exc:
+    except (StyxError, SetupError, OSError) as exc:
         print(f"styx: {exc}", file=sys.stderr)
         return 1
     print("styx started")
@@ -156,6 +171,7 @@ def _doctor() -> int:
         ("tor binary", bool(st["tor_binary"]), st["tor_binary"] or "install tor"),
         ("passphrase", st["password_set"], "hermes styx passwd"),
         ("upstream", st["upstream_ok"], st.get("upstream_error") or f"nothing on {st['upstream_host']}:{st['upstream_port']}"),
+        ("browser handoff", st["target"] != "webapp" or st.get("webapp_handoff", False), "hermes styx start"),
         ("gate process", bool(st["gate_pid"]), "hermes styx start"),
         ("tor process", bool(st["tor_pid"]), "hermes styx start"),
         ("onion", bool(st.get("onion")), "wait for publish / check logs"),

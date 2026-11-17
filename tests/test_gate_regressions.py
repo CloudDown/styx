@@ -71,6 +71,22 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
         return await self.browser.post("/login", data={"csrf": csrf, "password": password})
 
+    async def test_repeated_login_gets_do_not_invalidate_an_open_form(self):
+        await self.browser.get("/login")
+        csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+        await self.browser.get("/login?next=/favicon.ico")
+        self.assertEqual(self.browser.cookies[sessions.CSRF_COOKIE], csrf)
+        response = await self.browser.post("/login", data={"csrf": csrf, "password": "old-password"})
+        self.assertEqual(response.status_code, 303)
+
+    async def test_unauthenticated_favicon_does_not_touch_login_cookies(self):
+        await self.browser.get("/login")
+        csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+        response = await self.browser.get("/favicon.ico")
+        self.assertEqual(response.status_code, 204)
+        self.assertNotIn("set-cookie", response.headers)
+        self.assertEqual(self.browser.cookies[sessions.CSRF_COOKIE], csrf)
+
     async def test_preserves_gzip_and_separate_cookies(self):
         self.assertEqual((await self.login()).status_code, 303)
         content = gzip.compress(b"uncompressed")

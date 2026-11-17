@@ -35,6 +35,15 @@ def tor_binary() -> str | None:
     if configured:
         candidate = Path(configured).expanduser()
         return str(candidate.resolve()) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+    if sys.platform == "win32":
+        # Prefer the real executable, not Scoop's shim (which injects another
+        # torrc and spawns a different PID).
+        scoop = Path(os.environ.get("SCOOP") or Path.home() / "scoop")
+        global_scoop = Path(os.environ.get("SCOOP_GLOBAL") or Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / "scoop")
+        for root in (scoop, global_scoop):
+            executable = root / "apps/tor/current/tor/tor.exe"
+            if executable.is_file():
+                return str(executable.resolve())
     found = shutil.which("tor")
     if found:
         return found
@@ -42,6 +51,21 @@ def tor_binary() -> str | None:
         for raw in ("/opt/homebrew/bin/tor", "/usr/local/bin/tor"):
             if os.path.isfile(raw) and os.access(raw, os.X_OK):
                 return raw
+    if sys.platform == "win32":
+        desktop = Path.home() / "Desktop"
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                desktop = Path(os.path.expandvars(winreg.QueryValueEx(key, "Desktop")[0]))
+        except (ImportError, OSError):
+            pass
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+        for folder in (desktop / "Tor Browser", local / "Tor Browser",
+                       local / "Programs/Tor Browser", Path.home() / "Tor Browser"):
+            executable = folder / "Browser/TorBrowser/Tor/tor.exe"
+            if executable.is_file():
+                return str(executable.resolve())
     return None
 
 
@@ -65,13 +89,14 @@ def render_torrc(
     """
     tor_dir = paths.tor_data_dir(data_dir)
     hs_dir = paths.hidden_service_dir(data_dir)
-    log_path = paths.tor_log_path(data_dir)
     lines = [
         f"DataDirectory {_tor_path(tor_dir)}",
         "SocksPort 0",
         "AvoidDiskWrites 0",
         "SafeLogging 1",
-        f"Log notice file {_tor_path(log_path)}",
+        # Log's filename parser does not unquote paths like DataDirectory does.
+        # Popen already redirects stdout/stderr to our private tor.log.
+        "Log notice stdout",
         f"HiddenServiceDir {_tor_path(hs_dir)}",
         "HiddenServiceVersion 3",
         f"HiddenServicePort 80 127.0.0.1:{int(gate_port)}",
@@ -120,7 +145,7 @@ def start_tor(data_dir: Path, gate_port: int, *, client_auth: bool = False) -> s
             close_fds=True,
         )
     try:
-        write_pid(paths.tor_pid_path(data_dir), proc.pid)
+        write_pid(paths.tor_pid_path(data_dir), proc.pid, process=proc)
     except BaseException:
         terminate_child(proc)
         raise
@@ -209,11 +234,17 @@ def _linux_process_info(pid: int, path: Path) -> dict | None:
         return None
 
 
-def write_pid(path: Path, pid: int) -> None:
+def write_pid(path: Path, pid: int, *, process: subprocess.Popen | None = None) -> None:
     # Only registration of our newly spawned, unreaped child may wait for
     # /proc to settle around exec. Reads/stops still reject mismatches at once.
     deadline = time.monotonic() + 1.0
-    while (info := _process_info(pid, path)) is None:
+    while True:
+        if process is not None and process.poll() is not None:
+            log_path = paths.tor_log_path(path.parent) if path.name == "tor.pid" else paths.gate_log_path(path.parent)
+            raise TorError(f"{path.stem} exited during startup (exit {process.returncode}) — see {log_path}")
+        info = _process_info(pid, path)
+        if info is not None:
+            break
         if time.monotonic() >= deadline:
             raise TorError(f"cannot identify the process for {path.name} within 1s")
         time.sleep(0.01)

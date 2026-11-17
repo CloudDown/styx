@@ -27,10 +27,12 @@ Tor Browser → http://<v3>.onion
 |---|---|
 | `plugin.yaml` | manifest, `config_schema` (autostart, target, gate_port) |
 | `__init__.py` | `register()`: CLI + `/styx`; autostart thread with `may_restart_gateway=False` |
-| `cli.py` | `hermes styx {status,start,stop,url,passwd,client-auth,doctor,qr}` |
+| `cli.py` | `hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor,qr}` |
+| `bootstrap.py` | interactive host setup; confirmed package-manager installation of missing Tor |
 | `supervisor.py` | start/stop pids, state.json |
 | `webapp_ensure.py` | enable webapp + bring up gateway |
 | `gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
+| `webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
 | `headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
 | `network.py` | shared loopback validation and port readiness helpers |
 | `storage.py` | atomic 0600 writes for passwords, state and process identities |
@@ -50,6 +52,7 @@ Package imports are relative (`from .passwords import`). Gate subprocess: `PYTHO
 
 ```bash
 hermes styx passwd
+hermes styx setup          # interactive: offer Tor install, set missing password, prepare webapp, start
 hermes styx start          # enables webapp, (re)starts gateway if needed, then tor+gate
 hermes styx url            # secret
 hermes styx stop           # tor+gate only
@@ -67,6 +70,17 @@ No pytest in the Hermes venv — use stdlib `unittest`.
 - Public plugin API only (`hermes_cli.config`, `plugins.plugin_storage`, …). `hermes plugins validate` must stay green.
 - Do not monkeypatch Hermes core.
 - Login page: zero network. Local painting in `assets/login-background.jpg`, minimal glass password field.
+- Private webapp tabs need Hermes' native sessionStorage grant. After valid
+  Cerberus auth, use public `hermes webapp --no-open --skip-build` and the
+  official /webapp/launch → /webapp/window-session flow. Never read native
+  secret files, patch the frontend or turn Hermes authentication off.
+- Launch URLs must match the configured loopback upstream and become relative
+  redirects. Never log their output/tickets. Honor explicitly configured extra
+  Hermes sign-in providers; no private handoff for the dashboard target.
+- The one-use _styx_entry navigation marker is bound to the Styx cookie and
+  expires; every new tab/reload must be handled without a redirect loop.
+- Do not rotate a valid login CSRF token on every GET; background favicon
+  requests must not interfere with open login forms.
 - Rate-limit login is **global** (Tor peers all look like 127.0.0.1).
 - Pending login checks count toward the budget; scrypt stays off-loop and bounded.
 - Password replacement revokes HTTP sessions on their next request and open
@@ -78,8 +92,12 @@ No pytest in the Hermes venv — use stdlib `unittest`.
   macOS/Windows and older Linux use psutil guarded process operations. Never
   replace these checks with a bare PID signal or `os.kill(pid, 0)` on Windows.
 - Platforms: linux/darwin/win32. Native Windows secrets need protected ACLs,
-  not just chmod. Tor is an explicit external prerequisite (PATH or
-  STYX_TOR_BINARY); no silent system-package install/download.
+  not just chmod. Host CLI setup/start may offer Tor installation through an
+  existing package manager, with explicit confirmation and normal admin/license
+  prompts. Never install from gateway autostart, slash commands or dashboard/API;
+  never bootstrap package managers or auto-accept agreement prompts.
+- Tor logs use stdout redirected to tor.log. Do not quote filenames in a
+  `Log notice file` directive: Tor treats those quotes as filename characters.
 - Startup prepares the webapp through the public CLI, logs build errors to
   logs/webapp-build.log, and rejects missing/stale-interface HTTP responses.
 - Native Windows/macOS CI is in .github/workflows/tests.yml. Do not claim those

@@ -15,9 +15,9 @@ Tor Browser → http://<v3>.onion
               127.0.0.1:9120   hermes webapp
 ```
 
-- Bind **loopback only**. Refuse non-loopback in `gate.py`.
+- Bind **loopback only**. Refuse non-loopback in `backend/gate.py`.
 - Do **not** set `webapp.public_url` to the onion (Hermes DNS-rebinding + login gate). Styx owns auth.
-- `hermes styx start` runs public `hermes webapp --build-only` (freshness/build owned by Hermes), enables `webapp.enabled` and `gateway ensure` / `restart --interrupt --detach` if 9120 is down (`webapp_ensure.py`). Verify HTTP, not only TCP. `stop` kills tor+gate only — never the Hermes gateway (bots).
+- `hermes styx start` runs public `hermes webapp --build-only` (freshness/build owned by Hermes), enables `webapp.enabled` and `gateway ensure` / `restart --interrupt --detach` if 9120 is down (`backend/webapp_ensure.py`). Verify HTTP, not only TCP. `stop` kills tor+gate only — never the Hermes gateway (bots).
 - Onion identity is `$HERMES_HOME/plugin-data/styx/hidden_service/`. **Never delete it on stop.** Same keys → same `.onion` after restart.
 - `/styx` slash: up/down only, never the URL. URL = `hermes styx url` on the host.
 
@@ -27,26 +27,27 @@ Tor Browser → http://<v3>.onion
 |---|---|
 | `plugin.yaml` | manifest, `config_schema` (autostart, target, gate_port) |
 | `__init__.py` | `register()`: CLI + `/styx`; autostart thread with `may_restart_gateway=False` |
-| `cli.py` | `hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor,qr}` |
-| `bootstrap.py` | interactive host setup; confirmed package-manager installation of missing Tor |
-| `supervisor.py` | start/stop pids, state.json |
-| `webapp_ensure.py` | enable webapp + bring up gateway |
-| `gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
-| `webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
-| `headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
-| `network.py` | shared loopback validation and port readiness helpers |
-| `storage.py` | atomic 0600 writes for passwords, state and process identities |
-| `platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
-| `login_page.py` | minimal glass password field + local painting embedded as data URI, **no external assets** |
-| `passwords.py` | scrypt; empty refused; **no min length** |
-| `sessions.py` | HMAC cookie `styx_session`, 12h; key derived from current password hash |
-| `tor_supervisor.py` | dedicated tor, `SocksPort 0`, HS v3 → gate |
-| `client_auth.py` | optional v3 x25519 client keys |
-| `paths.py` | all durable state under `plugin_data_dir("styx")`, never the install dir |
+| `gate.py` | compatibility launcher for `python -m styx.gate`; keep the process command stable |
+| `backend/cli.py` | `hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor,qr}` |
+| `backend/bootstrap.py` | interactive host setup; confirmed package-manager installation of missing Tor |
+| `backend/supervisor.py` | start/stop pids, state.json |
+| `backend/webapp_ensure.py` | enable webapp + bring up gateway |
+| `backend/gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
+| `backend/webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
+| `backend/headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
+| `backend/network.py` | shared loopback validation and port readiness helpers |
+| `backend/storage.py` | atomic 0600 writes for passwords, state and process identities |
+| `backend/platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
+| `backend/login_page.py` | minimal glass password field + local painting embedded as data URI, **no external assets** |
+| `backend/passwords.py` | scrypt; empty refused; **no min length** |
+| `backend/sessions.py` | HMAC cookie `styx_session`, 12h; key derived from current password hash |
+| `backend/tor_supervisor.py` | dedicated tor, `SocksPort 0`, HS v3 → gate |
+| `backend/client_auth.py` | optional v3 x25519 client keys |
+| `backend/paths.py` | all durable state under `plugin_data_dir("styx")`, never the install dir |
 | `dashboard/` | tab `/styx` + `/api/plugins/styx/{status,start,stop}` |
 | `desktop/plugin.js` | opt-in status chip (`defaultEnabled: false`) |
 
-Package imports are relative (`from .passwords import`). Gate subprocess: `PYTHONPATH=<parent of plugin dir>` + `python -m styx.gate`. Folder name **must stay `styx`**.
+Implementation lives in `backend/`; package imports are relative (`from .passwords import` internally, `from .backend.cli import` at the root). Gate subprocess: `PYTHONPATH=<parent of plugin dir>` + `python -m styx.gate`. Folder name **must stay `styx`**. Keep `plugin.yaml`, `__init__.py`, `dashboard/` and `desktop/` at Hermes' expected locations. Install through `hermes plugins install CloudDown/styx`, update through `hermes plugins update styx`; the local development symlink is not a managed reinstall target.
 
 ## Commands
 
@@ -58,6 +59,7 @@ hermes styx url            # secret
 hermes styx stop           # tor+gate only
 hermes styx doctor
 hermes plugins validate ~/projet/styx
+hermes plugins doctor ~/projet/styx --ci
 hermes --run-module unittest discover -s ~/projet/styx/tests -v
 python3 -m unittest discover -s tests -v   # from ~/projet with PYTHONPATH=~/projet
 # or: cd ~/projet && python3 -m unittest discover -s styx/tests -v
@@ -109,7 +111,7 @@ No pytest in the Hermes venv — use stdlib `unittest`.
 
 - Starlette 1.9: `lifespan=`, not `on_shutdown=`.
 - websockets 15: `additional_headers=`, `max_size=None`.
-- `dashboard/plugin_api.py` is imported **without a package** — it does `sys.path` + `import styx.supervisor`.
+- `dashboard/plugin_api.py` is imported **without a package** — it does `sys.path` + `import styx.backend.supervisor`.
 - Autostart inside the gateway must **not** `gateway restart` (would kill itself).
 - Do not disable `webapp.enabled` on stop.
 - Do not log the onion at INFO in agent-facing surfaces.

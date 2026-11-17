@@ -80,15 +80,17 @@ L'arrêt conserve l'identité onion. Ne supprimez pas `hidden_service/` pour met
 
 ## Mise à jour
 
-Depuis le répertoire où vous avez cloné Styx :
+Pour une installation gérée par Hermes :
 
 ```bash
-git pull --ff-only
+hermes plugins update styx
 hermes styx stop
 hermes styx start
 ```
 
 Avec l'autorisation client Tor, utilisez `hermes styx start --client-auth`. Redémarrez **Styx seulement**, pas la passerelle Hermes. Les anciennes sessions devront se reconnecter.
+
+Pour un ancien clone manuel sans suivi Hermes, `hermes plugins adopt styx` enregistre sa provenance avant les mises à jour. Un checkout de développement lié par symlink reste géré avec Git ; ne le réinstallez pas par-dessus pour tester une réorganisation.
 
 ## Fonctionnement
 
@@ -117,20 +119,26 @@ Gardez le nom de dossier `styx` : les imports du plugin et le lancement de Cerbe
 | Fichier | Rôle |
 |---|---|
 | `plugin.yaml`, `__init__.py` | Manifeste et enregistrement Hermes. |
-| `cli.py`, `supervisor.py` | Commandes, démarrage et arrêt. |
-| `bootstrap.py` | Setup interactif et installation de Tor via le gestionnaire existant. |
-| `gate.py`, `headers.py` | Connexion et proxy HTTP/WebSocket. |
-| `webapp_handoff.py` | Passage vers l'autorisation native Hermes, par onglet et après Cerberus. |
-| `login_page.py`, `assets/` | Page de connexion autonome. |
-| `tor_supervisor.py`, `client_auth.py` | Service onion et autorisation Tor. |
-| `platform_support.py`, `storage.py`, `network.py` | Primitives portables, fichiers privés et contrôle HTTP. |
+| `gate.py` | Petit lanceur conservant la commande `python -m styx.gate` et l'identification des processus existants. |
+| `backend/cli.py`, `backend/supervisor.py` | Commandes, démarrage et arrêt. |
+| `backend/bootstrap.py` | Setup interactif et installation de Tor via le gestionnaire existant. |
+| `backend/gate.py`, `backend/headers.py` | Connexion et proxy HTTP/WebSocket. |
+| `backend/webapp_ensure.py`, `backend/webapp_handoff.py` | Préparation de la webapp et autorisation native Hermes, par onglet et après Cerberus. |
+| `backend/login_page.py`, `assets/` | Page de connexion autonome. |
+| `backend/passwords.py`, `backend/sessions.py` | Empreintes scrypt et cookies de session. |
+| `backend/tor_supervisor.py`, `backend/client_auth.py` | Service onion et autorisation Tor. |
+| `backend/platform_support.py`, `backend/storage.py`, `backend/network.py` | Primitives portables, fichiers privés et contrôle HTTP. |
+| `backend/paths.py` | Racine du plugin et chemins des données durables, toujours hors du code. |
 | `dashboard/`, `desktop/` | Intégrations visuelles Hermes. |
+
+Le point d'entrée `__init__.py` ne fait que l'enregistrement auprès d'Hermes ; l'implémentation utilise des imports relatifs dans `backend/`. Aucun paquet Python supplémentaire ni installation `pip` du dépôt n'est nécessaire. Le manifeste et les surfaces `dashboard/` et `desktop/` restent aux emplacements attendus par Hermes.
 
 Depuis la racine du dépôt, lancez les tests dans l'environnement Hermes :
 
 ```bash
 hermes --run-module unittest discover -s "$PWD/tests" -v
 hermes plugins validate "$PWD"
+hermes plugins doctor "$PWD" --ci
 ```
 
 Les tests utilisent des données temporaires et des serveurs HTTP/WebSocket locaux, jamais l'identité onion ni la passerelle en production. Les installations sont simulées. Si Tor est déjà installé, un test supplémentaire démarre le vrai binaire avec `DisableNetwork 1`, dans un répertoire temporaire avec des espaces ; il ne contacte pas le réseau Tor.

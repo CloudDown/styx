@@ -5,12 +5,13 @@ from __future__ import annotations
 import base64
 import html as htmlmod
 from functools import lru_cache
-from pathlib import Path
+
+from .paths import PLUGIN_ROOT
 
 
 @lru_cache(maxsize=1)
 def _background() -> str:
-    image = Path(__file__).with_name("assets") / "login-background.jpg"
+    image = PLUGIN_ROOT / "assets" / "login-background.jpg"
     return "data:image/jpeg;base64," + base64.b64encode(image.read_bytes()).decode("ascii")
 
 

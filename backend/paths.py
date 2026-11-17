@@ -7,7 +7,7 @@ from pathlib import Path
 from .platform_support import private_dir
 
 PLUGIN_ID = "styx"
-PLUGIN_ROOT = Path(__file__).resolve().parent
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
 def data_dir() -> Path:

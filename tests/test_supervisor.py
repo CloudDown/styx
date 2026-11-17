@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import passwords, paths, supervisor, tor_supervisor as tor  # noqa: E402
-from styx.network import wait_port  # noqa: E402
+from styx.backend import passwords, paths, supervisor, tor_supervisor as tor  # noqa: E402
+from styx.backend.network import wait_port  # noqa: E402
 
 
 class Supervisor(unittest.TestCase):
@@ -34,7 +34,7 @@ class Supervisor(unittest.TestCase):
 
     def mock_start(self):
         self.enterContext(patch.object(tor, "tor_binary", return_value="/usr/bin/tor"))
-        self.enterContext(patch("styx.webapp_ensure.ensure_upstream", return_value=("127.0.0.1", 9120)))
+        self.enterContext(patch("styx.backend.webapp_ensure.ensure_upstream", return_value=("127.0.0.1", 9120)))
         self.enterContext(patch.object(supervisor, "status", return_value=self.current))
         self.enterContext(patch.object(supervisor, "gate_port", return_value=9130))
         self.enterContext(patch.object(supervisor, "target_name", return_value="webapp"))

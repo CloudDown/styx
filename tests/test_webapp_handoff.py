@@ -15,7 +15,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import gate, passwords, sessions, webapp_handoff as handoff  # noqa: E402
+from styx.backend import gate, passwords, sessions, webapp_handoff as handoff  # noqa: E402
 from test_gate_regressions import Chunks, Transport  # noqa: E402
 
 TICKET = "t" * 43

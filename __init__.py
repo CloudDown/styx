@@ -9,7 +9,7 @@ log = logging.getLogger("hermes_plugins.styx")
 
 
 def register(ctx) -> None:
-    from .cli import register_cli, styx_command
+    from .backend.cli import register_cli, styx_command
 
     ctx.register_cli_command(
         name="styx",
@@ -24,7 +24,7 @@ def register(ctx) -> None:
     )
 
     def _slash(_raw: str) -> str:
-        from .supervisor import status
+        from .backend.supervisor import status
         st = status()
         if st["running"]:
             return "Styx is up. Onion URL is not sent in chat — run `hermes styx url` on the host."
@@ -42,7 +42,7 @@ def register(ctx) -> None:
 
 def _autostart() -> None:
     try:
-        from .supervisor import StyxError, start
+        from .backend.supervisor import StyxError, start
         start(wait=False, may_restart_gateway=False)
         log.info("styx autostart: gate+tor launched")
     except StyxError as exc:

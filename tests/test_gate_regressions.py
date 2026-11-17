@@ -15,7 +15,7 @@ from starlette.requests import ClientDisconnect
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import gate, passwords, sessions  # noqa: E402
+from styx.backend import gate, passwords, sessions  # noqa: E402
 
 
 class Chunks(httpx.AsyncByteStream):

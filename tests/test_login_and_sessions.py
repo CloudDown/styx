@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import login_page, sessions  # noqa: E402
+from styx.backend import login_page, sessions  # noqa: E402
 
 
 class LoginAndSessions(unittest.TestCase):
@@ -27,7 +27,7 @@ class LoginAndSessions(unittest.TestCase):
         self.assertNotIn("<footer", lowered)
         self.assertNotIn("<h1", lowered)
         encoded = html.split("data:image/jpeg;base64,", 1)[1].split('"', 1)[0]
-        image = Path(login_page.__file__).with_name("assets") / "login-background.jpg"
+        image = Path(__file__).resolve().parents[1] / "assets/login-background.jpg"
         self.assertEqual(base64.b64decode(encoded), image.read_bytes())
 
     def test_login_errors_and_csrf_are_escaped(self):

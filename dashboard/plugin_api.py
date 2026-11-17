@@ -18,7 +18,7 @@ def _supervisor():
     parent = str(_ROOT.parent)
     if parent not in sys.path:
         sys.path.insert(0, parent)
-    return importlib.import_module("styx.supervisor")
+    return importlib.import_module("styx.backend.supervisor")
 
 
 class StartBody(BaseModel):

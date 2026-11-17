@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import tor_supervisor as tor  # noqa: E402
+from styx.backend import tor_supervisor as tor  # noqa: E402
 
 
 class TorStartup(unittest.TestCase):

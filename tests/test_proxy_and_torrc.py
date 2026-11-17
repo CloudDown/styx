@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.headers import inbound_response_headers, outbound_headers, strip_styx_cookies  # noqa: E402
-from styx.tor_supervisor import render_torrc  # noqa: E402
+from styx.backend.headers import inbound_response_headers, outbound_headers, strip_styx_cookies  # noqa: E402
+from styx.backend.tor_supervisor import render_torrc  # noqa: E402
 
 
 class ProxyAndTorrc(unittest.TestCase):

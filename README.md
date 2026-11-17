@@ -3,45 +3,24 @@
 
 <p align="center"><img src="docs/login.png" width="100%" alt="Styx login page: a password field over a mythological painting, with Cerberus by the river Styx." /></p>
 
-## Install
+## 1. Install
 
-On the machine running Hermes, you need **Hermes ≥ 0.22.0**, Git and **Tor**. The plugin targets Linux, macOS and native Windows; Linux is tested locally, while native macOS/Windows validation runs through the added CI matrix. Use [Tor Browser](https://www.torproject.org/) to connect.
-
-If Tor is missing, `hermes styx setup` offers to install it through your existing package manager after showing the command and asking for confirmation. Linux uses its distribution's manager, macOS uses Homebrew, and Windows uses Scoop's Tor Expert Bundle or winget's official Tor Browser (which includes Tor). Administrator and agreement prompts remain with the package manager. Styx does not bootstrap a package manager or run remote installer scripts.
-
-For a manual installation, put `tor` / `tor.exe` on `PATH`, or set `STYX_TOR_BINARY` to its full executable path.
+On the machine running **Hermes ≥ 0.22.0**, open a terminal:
 
 ```bash
-mkdir -p "${HERMES_HOME:-$HOME/.hermes}/plugins"
-git clone https://github.com/CloudDown/styx.git "${HERMES_HOME:-$HOME/.hermes}/plugins/styx"
-hermes plugins enable styx
-```
-
-On Windows (PowerShell), use:
-
-```powershell
-$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $HOME ".hermes" }
-New-Item -ItemType Directory -Force (Join-Path $HermesHome "plugins")
-git clone https://github.com/CloudDown/styx.git (Join-Path $HermesHome "plugins/styx")
-hermes plugins enable styx
-```
-
-Windows state must be on a filesystem supporting private ACLs (normally NTFS). The manifest declares `psutil`, already included in current Hermes, for portable process management.
-
-## 1. Set up Styx
-
-```bash
+hermes plugins install CloudDown/styx
 hermes styx setup
 ```
 
-This installs missing Tor with your confirmation, asks for a password if none is set, prepares the webapp and starts Styx. Choose a long, unique passphrase. Existing passwords are never overwritten.
+Hermes prompts for dependency installation and plugin activation. Approve these to continue. If you leave the plugin disabled, run `hermes plugins enable styx` before setup.
 
-`hermes styx start` performs the same prerequisite checks, so it also works as a first-run setup in an interactive host terminal. Autostart and dashboard/API calls never prompt or install system packages; run setup on the host first.
+Setup asks for a password, prepares the webapp and starts Styx. Choose a long, unique passphrase; existing passwords are never overwritten. If Tor is missing, setup offers to install it through your existing package manager, with your confirmation.
+
+Linux, macOS and native Windows are supported. Windows requires a filesystem with private ACLs, normally NTFS. Platform prerequisites and manual Tor setup are covered in the [guide (French)](docs/GUIDE.md#linux-macos-et-windows). Autostart and dashboard/API calls never install system packages.
 
 ## 2. Open the passage
 
 ```bash
-hermes styx start
 hermes styx url
 ```
 
@@ -65,6 +44,7 @@ Only Tor and Cerberus stop. Hermes and its bots keep running.
 
 | Action | Command |
 |---|---|
+| Start again after stopping | `hermes styx start` |
 | Check status on the host | `hermes styx status` |
 | Diagnose a problem | `hermes styx doctor` |
 | Change your password | `hermes styx passwd` |

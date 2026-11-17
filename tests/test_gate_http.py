@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import passwords, paths  # noqa: E402
+from styx.backend import passwords, paths, tor_supervisor as tor  # noqa: E402
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -69,6 +69,12 @@ class GateHttp(unittest.TestCase):
                 )
                 try:
                     self._wait(gate_port)
+                    # The old launcher remains identifiable after an update.
+                    pidfile = paths.gate_pid_path(data)
+                    tor.write_pid(pidfile, proc.pid, process=proc)
+                    self.assertEqual(tor.read_pid(pidfile), proc.pid)
+                    pidfile.write_text(str(proc.pid))
+                    self.assertEqual(tor.read_pid(pidfile), proc.pid)
                     conn = http.client.HTTPConnection("127.0.0.1", gate_port, timeout=5)
                     conn.request("GET", "/login")
                     resp = conn.getresponse()

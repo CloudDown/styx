@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.network import upstream_health  # noqa: E402
+from styx.backend.network import upstream_health  # noqa: E402
 
 
 class Health(unittest.TestCase):

@@ -14,7 +14,7 @@ import psutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx import platform_support as platform, tor_supervisor as tor  # noqa: E402
+from styx.backend import platform_support as platform, tor_supervisor as tor  # noqa: E402
 
 
 class PlatformSupport(unittest.TestCase):

@@ -1,7 +1,9 @@
-<h1 align="center">Styx</h1>
-<p align="center">Access your Hermes web UI through Tor Browser.<br>One onion address, one password. No ports exposed to your local network.</p>
+# Styx
 
-<p align="center"><img src="docs/login.png" width="100%" alt="Styx login page: a password field over a mythological painting, with Cerberus by the river Styx." /></p>
+Access your Hermes web UI through Tor Browser.
+One onion address, one password. No ports exposed to your local network.
+
+![Styx login page: a password field over a mythological painting, with Cerberus by the river Styx.](docs/login.png)
 
 ## 1. Install
 
@@ -62,5 +64,20 @@ A session grants the permissions of the OS user running Hermes, **including shel
 Hermes and Cerberus listen only on loopback. Tor publishes the entry point; no port is exposed to the LAN. The login page loads no external resources. Login attempts share a global rate limit.
 
 Changing the password revokes existing sessions: the next HTTP request requires a new login, and open WebSockets close within one second. Do not set `webapp.public_url` to the onion address: Styx handles authentication.
+
+### What the plugin runs and stores
+
+- **Network:** a dedicated Tor process connects to the Tor network and publishes the password gate as an onion service. The gate proxies HTTP and WebSockets only to the configured loopback Hermes interface. Styx has no telemetry, analytics or usage reporting. Hermes and any integrations used through its UI retain their own network behaviour.
+- **Background processes:** `setup` / `start` launches Tor and the Cerberus gate as the current OS user. They keep running until `hermes styx stop` or process/host shutdown. Optional autostart is off by default; stopping Styx never stops the Hermes gateway.
+- **Host commands and configuration:** Styx uses public Hermes config/storage APIs and CLI commands. Starting the default webapp target enables `webapp.enabled`, prepares the interface with `hermes webapp --build-only`, and may start or restart the gateway if its HTTP interface is unavailable. After a valid Cerberus login, it obtains a one-use native browser launch through `hermes webapp --no-open --skip-build`; additional Hermes sign-in providers remain enforced. A gateway restart can interrupt active work.
+- **Optional system installation:** in an interactive host terminal only, setup can offer to install Tor through the existing system package manager. It shows the command and requires explicit confirmation; sudo/doas, administrator and license prompts remain with the package manager. Package downloads use that manager's configured repositories and verification. Styx does not bundle a Tor binary, bootstrap a package manager or download an installer script.
+- **Local files and secrets:** durable state lives under the active profile's `$HERMES_HOME/plugin-data/styx/`: a salted scrypt password hash, session-signing key, Tor onion identity, optional client authorizations, PID/state files and logs. These are protected by POSIX permissions or Windows ACLs; backups must be protected too. Styx reads its own process information and standard OS/package-manager locations outside that directory to identify processes and find Tor. It does not read Hermes authentication files, `.env` files, browser profiles or other applications' credential stores.
+- **Updates:** Styx has no self-updater. Use `hermes plugins update styx`; catalog installations follow the reviewed commit pin.
+
+The automated backend suite runs on Linux, macOS and Windows with Python 3.13 and 3.14. Raspberry Pi / ARM deployment has not been tested; use a working, supported Hermes installation and system Tor. These tests are not an independent security audit.
+
+## Artwork
+
+The login page, screenshot and catalog card reuse the same public-domain Luca Giordano fresco. [Artwork source and reproduction details](docs/ARTWORK.md).
 
 Configuration, updates and tests: [guide (French)](docs/GUIDE.md) · [MIT license](LICENSE).

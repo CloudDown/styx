@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install test dependencies
-        run: python -m pip install "httpx>=0.28,<1" "starlette>=0.47,<2" "uvicorn>=0.35,<1" "websockets>=15,<16" "cryptography>=44" "psutil>=5.9"
+        run: python -m pip install "httpx>=0.28,<1" "starlette>=0.47,<2" "uvicorn>=0.35,<1" "websockets>=15,<16" "cryptography>=44" "psutil>=5.9,<8"
       - name: Test native process, file and proxy behavior
         working-directory: styx
         run: python -m unittest discover -s tests -v

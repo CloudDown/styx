@@ -1,0 +1,32 @@
+name: styx
+version: 0.1.0
+description: >-
+  Expose the Hermes webapp (or dashboard) as a Tor v3 onion service, behind a
+  Cerberus password gate on loopback. No ports opened on the LAN or the public
+  internet. The onion URL is a secret; a leaked URL still needs the passphrase.
+author: rain
+license: MIT
+kind: standalone
+platforms:
+  - linux
+requires_hermes: ">=0.22.0"
+tags: [tor, onion, remote, webapp, privacy]
+provides_tools: []
+provides_hooks: []
+config_schema:
+  autostart:
+    type: bool
+    default: false
+    description: Start Tor and the Cerberus gate when Hermes loads this plugin.
+  target:
+    type: str
+    default: webapp
+    description: "Upstream surface to publish: webapp (the full UI) or dashboard."
+  gate_port:
+    type: int
+    default: 9130
+    description: Loopback port of the Cerberus gate (Tor points here, not at Hermes).
+config_keys:
+  - webapp.port
+  - webapp.enabled
+  - webapp.host

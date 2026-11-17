@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+.DS_Store
+
+# Local credentials and runtime data must never be published.
+.env
+.env.*
+!.env.example
+/.hermes/
+/plugin-data/
+/hidden_service/
+/tor/
+/logs/
+/passwd
+/session.key
+/state.json
+/supervisor.lock
+/torrc
+*.pid
+*.log
+*.auth
+*.auth_private
+hs_ed25519_*

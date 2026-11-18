@@ -103,6 +103,68 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers.get_list("set-cookie"), ["one=1; Path=/", "two=2; Path=/"])
         self.assertTrue(body.closed)
 
+    async def test_login_compression_preserves_the_exact_page_and_csrf(self):
+        identity = await self.browser.get("/login", headers={"accept-encoding": "identity"})
+        encoded = await self.browser.get("/login", headers={"accept-encoding": "gzip"})
+        self.assertEqual(identity.content, encoded.content)
+        self.assertNotIn("content-encoding", identity.headers)
+        self.assertEqual(encoded.headers["content-encoding"], "gzip")
+        self.assertEqual(encoded.headers["cache-control"], "no-store")
+        self.assertLess(int(encoded.headers["content-length"]), len(identity.content) * 0.85)
+        # The usable form arrives before the large inline painting.
+        self.assertLess(encoded.text.index('name="password"'), 5000)
+        self.assertLess(encoded.text.index("</form>"), encoded.text.index("data:image/jpeg;base64,"))
+
+    async def test_public_scripts_are_streamed_compressed_without_changing_cache_policy(self):
+        await self.login()
+        content = b"const hello = 'unchanged';\n" * 1000
+        body = Chunks(content[:5000], content[5000:])
+        self.handler = lambda req: httpx.Response(200, headers={
+            "content-type": "text/javascript", "content-length": str(len(content)),
+            "cache-control": "public, max-age=31536000, immutable", "etag": '"v1"',
+        }, stream=body)
+        async with self.browser.stream("GET", "/assets/main-123abcXY.js",
+                                       headers={"accept-encoding": "gzip"}) as response:
+            encoded = b"".join([chunk async for chunk in response.aiter_raw()])
+        self.assertEqual(gzip.decompress(encoded), content)
+        self.assertLess(len(encoded), len(content) // 10)
+        self.assertNotIn("content-length", response.headers)
+        self.assertEqual(response.headers["etag"], 'W/"v1"')
+        self.assertIn("Accept-Encoding", response.headers["vary"])
+        self.assertEqual(response.headers["cache-control"], "public, max-age=31536000, immutable")
+        self.assertTrue(body.closed)
+
+    async def test_assets_still_require_cerberus_and_no_api_compression_is_added(self):
+        response = await self.browser.get("/assets/main-123abcXY.js")
+        self.assertEqual(response.status_code, 303)
+        await self.login()
+        content = b"private" * 1000
+        self.handler = lambda req: httpx.Response(200, headers={
+            "content-type": "application/json", "content-length": str(len(content)),
+            "cache-control": "no-store",
+        }, stream=Chunks(content))
+        response = await self.browser.get("/api/profiles")
+        self.assertNotIn("content-encoding", response.headers)
+        self.assertEqual(response.content, content)
+        self.assertEqual(response.headers["content-length"], str(len(content)))
+
+    async def test_preencoded_static_bytes_lengths_and_duplicate_cookies_stay_raw(self):
+        await self.login()
+        content = gzip.compress(b"static body" * 1000)
+        body = Chunks(content)
+        self.handler = lambda req: httpx.Response(200, headers=[
+            ("content-type", "text/javascript"), ("content-encoding", "gzip"),
+            ("content-length", str(len(content))),
+            ("cache-control", "public, max-age=31536000, immutable"),
+            ("set-cookie", "one=1; Path=/"), ("set-cookie", "two=2; Path=/"),
+        ], stream=body)
+        async with self.browser.stream("GET", "/assets/main-123abcXY.js") as response:
+            encoded = b"".join([chunk async for chunk in response.aiter_raw()])
+        self.assertEqual(encoded, content)
+        self.assertEqual(response.headers["content-length"], str(len(content)))
+        self.assertEqual(response.headers.get_list("set-cookie"), ["one=1; Path=/", "two=2; Path=/"])
+        self.assertTrue(body.closed)
+
     async def test_concurrent_attempts_cannot_bypass_global_limit(self):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]

@@ -41,7 +41,9 @@ def render(error: str = "", csrf: str = "") -> str:
     padding: 24px;
     color: #fff;
     font-family: system-ui, sans-serif;
-    background: url("{_background()}") center / cover no-repeat;
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
   }}
   main {{ position: relative; width: min(320px, 100%); }}
   .field {{
@@ -125,6 +127,7 @@ def render(error: str = "", csrf: str = "") -> str:
     {banner}
   </form>
 </main>
+<style>body {{ background-image: url("{_background()}"); }}</style>
 </body>
 </html>
 """

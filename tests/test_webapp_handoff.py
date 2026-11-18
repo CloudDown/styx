@@ -155,11 +155,13 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
             body = b"<html>Hermes workspace</html>"
         return httpx.Response(status, headers=headers, stream=Chunks(body))
 
-    async def login(self):
+    async def login(self, *, next_path="/api/profiles", expected_status=303):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
-        response = await self.browser.post("/login", data={"csrf": csrf, "password": "test-password"})
-        self.assertEqual(response.status_code, 303)
+        response = await self.browser.post("/login", params={"next": next_path},
+                                           data={"csrf": csrf, "password": "test-password"})
+        self.assertEqual(response.status_code, expected_status)
+        return response
 
     async def complete(self, response):
         self.assertEqual(response.status_code, 303)
@@ -186,12 +188,46 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.upstream_calls)
 
     async def test_password_login_native_exchange_workspace_and_authenticated_api(self):
-        await self.login()
-        token, _ = await self.complete(await self.browser.get("/"))
+        response = await self.login(next_path="/?profile=other&session=chat")
+        self.assertIn("styx-launch;dur=", response.headers["server-timing"])
+        token, entry = await self.complete(response)
+        self.assertEqual(parse_qs(urlsplit(entry).query)["profile"], ["other"])
+        self.assertEqual(parse_qs(urlsplit(entry).query)["session"], ["chat"])
         response = await self.browser.get("/api/profiles", headers={"X-Hermes-Session-Token": token})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.issue.call_count, 1)
         self.assertNotIn("styx_session", self.upstream_calls[-1].headers.get("Cookie", ""))
+
+    async def test_login_failure_does_not_request_a_native_ticket(self):
+        await self.browser.get("/login")
+        response = await self.browser.post("/login", data={
+            "csrf": self.browser.cookies[sessions.CSRF_COOKIE], "password": "wrong",
+        })
+        self.assertEqual(response.status_code, 401)
+        self.issue.assert_not_called()
+
+    async def test_password_replaced_during_direct_launch_does_not_issue_a_session(self):
+        def changed(host, port):
+            passwords.write_hash(self.root / "passwd", "replacement")
+            return {"ticket": TICKET, "query": ""}
+        self.issue.side_effect = changed
+        response = await self.login(next_path="/", expected_status=401)
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn(sessions.COOKIE, self.browser.cookies)
+        self.assertNotIn(TICKET, str(response.headers))
+
+    async def test_direct_login_respects_extra_hermes_provider_and_closed_failure(self):
+        self.issue.side_effect = None
+        self.issue.return_value = None
+        response = await self.login(next_path="/")
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/")
+        self.issue.side_effect = handoff.HandoffError("Hermes browser launch unavailable.")
+        self.browser.cookies.clear()
+        response = await self.login(next_path="/", expected_status=503)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertFalse(self.upstream_calls)
 
     async def test_reload_issues_a_new_native_grant_instead_of_looping(self):
         await self.login()

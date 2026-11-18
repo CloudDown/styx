@@ -28,13 +28,14 @@ Tor Browser → http://<v3>.onion
 | `plugin.yaml` | manifest, `config_schema` (autostart, target, gate_port) |
 | `__init__.py` | `register()`: CLI + `/styx`; autostart thread with `may_restart_gateway=False` |
 | `gate.py` | compatibility launcher for `python -m styx.gate`; keep the process command stable |
-| `backend/cli.py` | `hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor,qr}` |
+| `backend/cli.py` | `hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor}` |
 | `backend/bootstrap.py` | interactive host setup; confirmed package-manager installation of missing Tor |
 | `backend/supervisor.py` | start/stop pids, state.json |
 | `backend/webapp_ensure.py` | enable webapp + bring up gateway |
 | `backend/gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
 | `backend/webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
 | `backend/headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
+| `backend/asset_transfer.py` | negotiated streaming gzip for public immutable hashed JS/CSS only; no shared cache |
 | `backend/network.py` | shared loopback validation and port readiness helpers |
 | `backend/storage.py` | atomic 0600 writes for passwords, state and process identities |
 | `backend/platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
@@ -87,8 +88,12 @@ No pytest in the Hermes venv — use stdlib `unittest`.
 - Pending login checks count toward the budget; scrypt stays off-loop and bounded.
 - Password replacement revokes HTTP sessions on their next request and open
   WebSockets within one second. Do not cache the password hash at gate startup.
-- Proxy responses stay raw: preserve Content-Encoding/Length and duplicate
-  Set-Cookie headers. WebSocket handshake headers belong to the upstream client.
+- Already encoded responses, APIs and auth pages stay raw: preserve
+  Content-Encoding/Length and duplicate Set-Cookie headers. Only unencoded,
+  public immutable hashed JS/CSS may use negotiated streaming gzip; respect
+  ranges/no-transform, weaken ETags and remove original byte lengths/digests.
+  Never cache private content or launch tickets. WebSocket handshake headers
+  belong to the upstream client.
 - Start/stop share a non-blocking native process lock. PID files carry process
   identity; legacy integers require command/profile checks. Linux keeps pidfds;
   macOS/Windows and older Linux use psutil guarded process operations. Never
@@ -120,4 +125,3 @@ No pytest in the Hermes venv — use stdlib `unittest`.
 
 - Rotate onion (new HS keys) as an explicit CLI.
 - Dashboard target auto-start (`hermes dashboard --no-open`) — webapp path is the one that auto-starts.
-- ASCII QR needs optional `qrcode`; not a dependency.

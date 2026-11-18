@@ -26,7 +26,6 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     ca = subs.add_parser("client-auth", help="Mint a Tor v3 client key")
     ca.add_argument("--name", default="device", help="Label for this client (default: device)")
     subs.add_parser("doctor", help="Check tor, passphrase, webapp, processes")
-    subs.add_parser("qr", help="Print the onion URL as ASCII QR if qrcode is installed")
     subparser.set_defaults(func=styx_command)
 
 
@@ -53,8 +52,6 @@ def styx_command(args: argparse.Namespace) -> int:
             return _client_auth(getattr(args, "name", "device"))
         if cmd == "doctor":
             return _doctor()
-        if cmd == "qr":
-            return _qr()
     except KeyboardInterrupt:
         return 130
     print(f"unknown subcommand: {cmd}")
@@ -184,23 +181,3 @@ def _doctor() -> int:
         if not ok:
             rc = 1
     return rc
-
-
-def _qr() -> int:
-    from .supervisor import status
-    st = status()
-    url = st.get("url")
-    if not url:
-        print("styx: no onion yet", file=sys.stderr)
-        return 1
-    try:
-        import qrcode  # type: ignore
-    except ImportError:
-        print(url)
-        print("(optional: pip install qrcode for an ASCII QR)")
-        return 0
-    qr = qrcode.QRCode(border=1)
-    qr.add_data(url)
-    qr.print_ascii(invert=True)
-    print(url)
-    return 0

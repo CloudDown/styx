@@ -78,9 +78,8 @@ class GateHttp(unittest.TestCase):
                     conn = http.client.HTTPConnection("127.0.0.1", gate_port, timeout=5)
                     conn.request("GET", "/login")
                     resp = conn.getresponse()
-                    html = resp.read().decode()
+                    resp.read()
                     self.assertEqual(resp.status, 200)
-                    self.assertIn('aria-label="Mot de passe"', html)
                     csrf = None
                     for h, v in resp.getheaders():
                         if h.lower() == "set-cookie" and "styx_csrf=" in v:

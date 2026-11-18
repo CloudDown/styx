@@ -36,6 +36,17 @@ Un nouvel onglet ou un rechargement reçoit son propre passage de lancement. Le 
 
 Les lancements sont limités en concurrence et en nombre de passages en attente. Les erreurs ou délais du lanceur donnent une réponse contrôlée plutôt qu'un accès non authentifié. `hermes styx start` remplace automatiquement un ancien gate qui ne gérait pas encore ce passage, sans redémarrer la passerelle ni supprimer l'identité onion.
 
+## Chargement et performances
+
+- **Cerberus** conserve exactement la même peinture, le même formulaire et aucune ressource externe. Le formulaire précède désormais les données de l'image dans le HTML pour pouvoir s'afficher sans attendre la peinture complète. La page utilise gzip si le navigateur l'accepte, sans mise en cache du formulaire ni de son jeton CSRF.
+- **Après le mot de passe**, Styx demande directement le passage natif Hermes : un aller-retour vers la racine est supprimé. Aucune autorisation n'est créée avant la vérification du mot de passe. Les nouveaux onglets et rechargements utilisent toujours le flux officiel.
+- **Scripts et styles** : seuls les fichiers JS/CSS versionnés sous `/assets/`, explicitement publics et immuables côté Hermes, peuvent être compressés en streaming. La compression reste hors de la boucle réseau. Les réponses déjà encodées, les plages de téléchargement, `no-transform` et les réponses portant des cookies ne sont pas transformées.
+- **Cache** : les directives natives d'Hermes sont conservées. Styx n'ajoute ni cache partagé ni stockage de données privées, de réponses API ou de tickets. Les pages natives d'authentification et les API restent transmises sans compression supplémentaire.
+
+L'en-tête `Server-Timing: styx-launch;dur=…` sur les redirections de lancement donne le temps serveur du passage Hermes, sans divulguer son lien ou son ticket. Il aide à distinguer un lanceur lent du transfert des fichiers par Tor.
+
+Ces optimisations réduisent le volume à transférer, mais ne garantissent pas une ouverture instantanée : le débit Tor, la puissance de l'hôte et le navigateur restent déterminants. Pour une installation déjà lancée, rechargez le code en redémarrant **Styx seulement** (`stop`, puis `start`, avec `--client-auth` si utilisé) ; il n'est pas nécessaire de redémarrer les bots.
+
 ## Linux, macOS et Windows
 
 Hermes gère son installation et la construction de sa webapp ; le plugin reste responsable du lancement de Tor, des verrous, de l'identification de ses processus et des permissions de ses secrets.
@@ -76,7 +87,7 @@ Les données durables sont dans `$HERMES_HOME/plugin-data/styx/` (par défaut `~
 
 L'arrêt conserve l'identité onion. Ne supprimez pas `hidden_service/` pour mettre à jour ou dépanner Styx : perdre ses clés change l'adresse. Protégez ce répertoire et ses sauvegardes comme des identifiants.
 
-`hermes styx url`, `start`, `status` et `qr` peuvent afficher l'adresse sur l'hôte. `/styx` dans le chat n'affiche que l'état. Le QR ASCII nécessite le paquet facultatif `qrcode` dans l'environnement Hermes.
+`hermes styx url`, `start` et `status` peuvent afficher l'adresse sur l'hôte. `/styx` dans le chat n'affiche que l'état.
 
 ## Mise à jour
 

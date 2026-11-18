@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gzip
 import hmac
 import logging
 import re
@@ -15,7 +16,7 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 import uvicorn
@@ -30,6 +31,7 @@ from . import login_page
 from . import passwords
 from . import paths
 from . import sessions
+from .asset_transfer import accepts_gzip, compressible_asset, gzip_headers, gzip_stream
 from .network import require_loopback
 from .webapp_handoff import ENTRY_QUERY, HandoffError, WebappHandoff, strip_entry_query
 
@@ -69,14 +71,17 @@ class _LoginLimiter:
 class _ProxyResponse(StreamingResponse):
     """Close the upstream even if sending headers fails before iteration starts."""
 
-    def __init__(self, upstream: httpx.Response):
+    def __init__(self, upstream: httpx.Response, *, compress: bool = False):
         self.upstream = upstream
-        super().__init__(upstream.aiter_raw(), status_code=upstream.status_code)
+        super().__init__(gzip_stream(upstream) if compress else upstream.aiter_raw(),
+                         status_code=upstream.status_code)
         headers = httpx.Headers(upstream.headers.raw, encoding="latin-1")
         self.raw_headers = [
             (key.lower().encode("latin-1"), value.encode("latin-1"))
             for key, value in hdrs.inbound_response_headers(headers)
         ]
+        if compress:
+            self.raw_headers = gzip_headers(self.raw_headers)
 
     async def __call__(self, scope, receive, send):
         try:
@@ -103,6 +108,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     upstream_base = str(httpx.URL(scheme="http", host=upstream_host, port=upstream_port)).rstrip("/")
     limiter = _LoginLimiter()
     hash_slots = asyncio.Semaphore(2)
+    render_slots = asyncio.Semaphore(2)
     handoff = WebappHandoff(upstream_host, upstream_port) if webapp_handoff else None
 
     def auth_key() -> bytes | None:
@@ -113,9 +119,30 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         key = auth_key()
         return key is not None and sessions.valid(key, connection.cookies.get(sessions.COOKIE))
 
-    def login_response(error: str = "", status_code: int = 200, *, csrf: str | None = None) -> Response:
+    async def login_response(request: Request, error: str = "", status_code: int = 200, *,
+                             csrf: str | None = None) -> Response:
         csrf = csrf or sessions.new_csrf()
-        resp = HTMLResponse(login_page.render(error=error, csrf=csrf), status_code=status_code)
+        compressed = accepts_gzip(request.headers.get("accept-encoding", ""))
+        def render():
+            body = login_page.render(error=error, csrf=csrf).encode("utf-8")
+            return gzip.compress(body, compresslevel=1, mtime=0) if compressed else body
+        async with render_slots:
+            work = asyncio.create_task(asyncio.to_thread(render))
+            cancelled = False
+            while True:
+                try:
+                    body = await asyncio.shield(work)
+                    break
+                except asyncio.CancelledError:
+                    if work.cancelled():
+                        raise
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
+        resp = HTMLResponse(body, status_code=status_code)
+        resp.headers["Vary"] = "Accept-Encoding"
+        if compressed:
+            resp.headers["Content-Encoding"] = "gzip"
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Referrer-Policy"] = "no-referrer"
         resp.set_cookie(
@@ -149,12 +176,12 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         # Repeated GETs / another login tab must not invalidate an open form.
         if not re.fullmatch(r"[A-Za-z0-9_-]{32}", csrf):
             csrf = None
-        return login_response(csrf=csrf)
+        return await login_response(request, csrf=csrf)
 
     async def login_post(request: Request) -> Response:
         delay = limiter.reserve()
         if delay is None:
-            resp = login_response("Réessaie plus tard.", 429)
+            resp = await login_response(request, "Réessaie plus tard.", 429)
             resp.headers["Retry-After"] = str(_FAIL_WINDOW)
             return resp
         success = False
@@ -164,13 +191,13 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 async with asyncio.timeout(_LOGIN_TIMEOUT):
                     async for chunk in request.stream():
                         if len(body) + len(chunk) > _LOGIN_MAX_BYTES:
-                            return login_response("Formulaire trop volumineux.", 413)
+                            return await login_response(request, "Formulaire trop volumineux.", 413)
                         body.extend(chunk)
                 form = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=8)
             except TimeoutError:
-                return login_response("Formulaire trop lent.", 408)
+                return await login_response(request, "Formulaire trop lent.", 408)
             except ValueError:
-                return login_response("Formulaire invalide.", 400)
+                return await login_response(request, "Formulaire invalide.", 400)
             csrf_form = form.get("csrf", [""])[0]
             csrf_cookie = request.cookies.get(sessions.CSRF_COOKIE) or ""
             password = form.get("password", [""])[0]
@@ -180,10 +207,10 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             )
             stored = passwords.read_hash(passwd_file)
             if not ok_csrf or not stored or not await verify(password, stored):
-                return login_response("Mot de passe incorrect.", 401)
+                return await login_response(request, "Mot de passe incorrect.", 401)
             # Reject a login whose password was replaced during verification.
             if passwords.read_hash(passwd_file) != stored:
-                return login_response("Réessaie.", 401)
+                return await login_response(request, "Réessaie.", 401)
             token = sessions.issue(sessions.password_key(secret, stored))
             success = True
         finally:
@@ -191,7 +218,22 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         nxt = request.query_params.get("next") or "/"
         if not nxt.startswith("/") or nxt.startswith(("//", "/\\")):
             nxt = "/"
-        resp = RedirectResponse(nxt, status_code=303)
+        launch_started = time.monotonic()
+        if handoff and urlsplit(nxt).path == "/":
+            try:
+                # The password is already verified. Skip the otherwise redundant
+                # round trip through GET /, without pre-issuing/caching a ticket.
+                target = await handoff.launch(token, urlsplit(nxt).query)
+                resp = RedirectResponse(target or nxt, status_code=303)
+            except HandoffError as exc:
+                resp = HTMLResponse(str(exc), status_code=503)
+            if passwords.read_hash(passwd_file) != stored:
+                return await login_response(request, "Réessaie.", 401)
+            resp.headers["Server-Timing"] = f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}"
+        else:
+            resp = RedirectResponse(nxt, status_code=303)
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "no-referrer"
         resp.set_cookie(
             sessions.COOKIE, token, httponly=True, samesite="lax",
             max_age=sessions.TTL_SECONDS, path="/",
@@ -218,6 +260,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if handoff and request.method == "GET" and request.url.path == "/":
             session = request.cookies.get(sessions.COOKIE) or ""
             if not handoff.consume(request.query_params.get(ENTRY_QUERY), session):
+                launch_started = time.monotonic()
                 try:
                     target = await handoff.launch(session, query)
                 except HandoffError as exc:
@@ -230,6 +273,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 if target:
                     return RedirectResponse(target, status_code=303, headers={
                         "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                        "Server-Timing": f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}",
                     })
             query = strip_entry_query(query)
         url = upstream_base + request.url.path
@@ -249,7 +293,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             log.warning("upstream error: %s", exc)
             return HTMLResponse("Hermes is not reachable on loopback.", status_code=502)
 
-        return _ProxyResponse(upstream)
+        return _ProxyResponse(upstream, compress=compressible_asset(request, upstream))
 
     async def proxy_ws(websocket: WebSocket) -> None:
         if not authed(websocket):

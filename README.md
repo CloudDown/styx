@@ -30,6 +30,10 @@ Styx asks Hermes to prepare the webapp (reusing a fresh bundle or building a mis
 
 After Cerberus, Styx uses Hermes' official one-use launch flow to sign the tab in automatically. You do not need to run `hermes webapp` manually. New tabs and reloads are handled too, without disabling Hermes authentication or modifying its code. An additional Hermes sign-in provider, if explicitly configured, is still respected.
 
+![Hermes webapp open in Tor Browser, with the onion address and session list redacted.](docs/tor-webapp.png)
+
+Hermes in Tor Browser. The onion address and session list are redacted for privacy.
+
 Rebuilding an interface on a running gateway does not restart Hermes or its bots. Build errors point to `plugin-data/styx/logs/webapp-build.log`; startup does not report success with a missing-interface error page.
 
 Your address stays the same across stops and restarts. Keep it private, even though a password is still required to get in.

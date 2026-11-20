@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#fefefe" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d1015" media="(prefers-color-scheme: dark)">
+  <title>Styx Fast · Hermes</title>
+  <!-- STYX_STYLE -->
+</head>
+<body>
+  <div class="workspace" id="workspace">
+    <aside class="sidebar" id="sidebar" aria-label="Sessions">
+      <div class="brand">
+        <span>Hermes</span>
+        <button id="close-sessions" class="icon mobile" aria-label="Close sessions" type="button">×</button>
+      </div>
+      <button id="new" class="new" type="button">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 4l4 4m-9 5-1 4 4-1 8-8-3-3z"/></svg> New session
+      </button>
+      <nav aria-label="Recent sessions">
+        <h2>Sessions</h2>
+        <p id="session-status" class="note" role="status">Connecting to Hermes…</p>
+        <ul id="sessions"></ul>
+        <button id="more" class="quiet" type="button" hidden>Load more</button>
+        <button id="refresh" class="quiet" type="button" hidden>Retry</button>
+      </nav>
+      <button id="settings" class="utility" type="button">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path id="gear" d="m10 3-.7 2.3-2 .9-2.2-.6-2 3.4 1.6 1.7v2.6L3.1 15l2 3.4 2.2-.6 2 .9.7 2.3h4l.7-2.3 2-.9 2.2.6 2-3.4-1.6-1.7v-2.6L20.9 9l-2-3.4-2.2.6-2-.9L14 3z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg> Settings
+      </button>
+    </aside>
+    <main class="chat">
+      <header class="top">
+        <button id="open-sessions" class="icon mobile" aria-label="Open sessions" aria-controls="sidebar" aria-expanded="false" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        </button>
+        <h1 id="title">New chat</h1>
+        <button id="rename-active" class="icon" type="button" aria-label="Rename session" title="Rename session" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 16-1 5 5-1L21 7l-4-4zM14 6l4 4"/></svg></button>
+        <button id="mobile-settings" class="icon mobile" aria-label="Settings" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><use href="#gear"/></svg>
+        </button>
+      </header>
+      <div class="history" id="history">
+        <div class="column">
+          <div class="welcome" id="welcome">
+            <h2 class="sr-only">Chat with Hermes</h2>
+            <!-- The official empty chat's “HERMES AGENT”, set in Collapse Bold.
+                 Fixed artwork keeps the single-page client independent of fonts. -->
+            <svg class="wordmark" viewBox="0 0 7670 850" aria-hidden="true" fill="currentColor">
+              <g transform="translate(0 812) scale(1 -1)">
+                <path d="M377 15V0H705V15C630 29 616 52 616 211V589C616 748 630 771 705 785V800H377V785C452 771 466 748 466 589V455H249V589C249 748 263 771 338 785V800H10V785C85 771 99 748 99 589V211C99 52 85 29 10 15V0H338V15C263 29 249 52 249 211V425H466V211C466 52 452 29 377 15Z"/>
+                <defs><path id="word-e" d="M10 15V0H524V329L511 333L492 279C414 58 312 31 249 30V406C312 405 338 392 383 283L401 238L414 242V600L401 604L383 559C339 451 312 437 249 436V770C312 769 413 755 489 571L511 517L524 522V800H10V785C85 771 99 748 99 589V211C99 52 85 29 10 15Z"/></defs>
+                <use href="#word-e" x="795"/>
+                <path transform="translate(1454)" d="M417 173 501 -31 514 -26V382L300 407C442 418 539 493 539 602C539 722 425 800 249 800H10V785C85 771 99 748 99 589V211C99 52 85 29 10 15V0H338V15C263 29 249 52 249 211V404C296 401 339 362 417 173ZM249 417V783C337 782 384 708 384 601C384 508 340 424 249 417Z"/>
+                <path transform="translate(2103)" d="M10 15V0H217V15C135 56 129 247 129 370V732L332 0H343L536 736V211C536 52 522 29 447 15V0H775V15C700 29 686 52 686 211V589C686 748 700 771 775 785V800H523L399 329L271 800H10V785C85 771 99 748 99 589V370C99 247 99 56 10 15Z"/>
+                <use href="#word-e" x="2968"/>
+                <path transform="translate(3627)" d="M254 -10C373 -10 465 60 465 165C465 272 416 350 306 463C216 556 161 628 161 696C161 748 194 780 244 780C299 780 348 705 410 548L432 491L445 496L446 740C386 787 327 810 250 810C122 810 35 725 35 630C35 536 92 459 202 353C294 264 340 192 340 111C340 54 309 20 254 20C176 20 135 97 71 284L54 334L41 330V61C106 13 170 -10 254 -10Z"/>
+                <path transform="translate(4487)" d="M60 0H73L312 233C318 198 329 147 329 112C329 40 278 15 206 15V0H521L330 800H102V785C152 785 166 761 166 733C166 714 163 694 151 644L60 252ZM91 252 197 710 307 252Z"/>
+                <path transform="translate(5088)" d="M294 -10C391 -10 445 8 520 51V417H276V402C372 390 395 356 395 246V52C379 34 353 20 319 20C223 20 175 212 175 405C175 631 219 780 304 780C366 780 414 705 492 481L505 486V739C441 787 397 810 294 810C128 810 20 649 20 405C20 150 127 -10 294 -10Z"/>
+                <use href="#word-e" x="5718"/>
+                <path transform="translate(6377)" d="M10 15V0H217V15C135 46 129 237 129 360V585L491 0H521V490C521 649 527 753 609 785V800H402V785C491 753 491 649 491 490V289L175 800H10V785C85 771 99 748 99 589V360C99 237 99 46 10 15Z"/>
+                <path transform="translate(7077)" d="M132 15V0H459V15C387 33 371 60 371 211V775H374C413 775 469 730 514 587L558 447L571 452V800H20V452L33 447L78 587C124 729 178 775 218 775H221V211C221 66 208 34 132 15Z"/>
+              </g>
+            </svg>
+            <p>Start a conversation or pick up a session.</p>
+          </div>
+          <button id="older" class="quiet" type="button" hidden>Load earlier messages</button>
+          <ol id="messages" aria-label="Conversation"></ol>
+        </div>
+      </div>
+      <button id="latest" class="latest" type="button" hidden aria-label="Jump to latest message" title="Jump to latest">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14m6-6-6 6-6-6"/></svg>
+      </button>
+      <div class="composer-area">
+        <div class="column">
+          <p id="notice" class="note status" role="status"></p>
+          <a id="reconnect" class="quiet reconnect" href="/_styx/fast/connect" hidden>Reconnect to Hermes</a>
+          <audio id="voice-player" controls hidden></audio>
+          <form id="composer" novalidate>
+            <div id="attachments" hidden></div>
+            <button id="attach" class="icon" type="button" aria-label="Attach files" title="Attach files" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <input id="files" type="file" multiple hidden>
+            <label class="sr-only" for="prompt">Message Hermes</label>
+            <textarea id="prompt" placeholder="What are we building?" rows="1" maxlength="20000" dir="auto" readonly></textarea>
+            <div class="compose-actions">
+              <button id="model" class="model" type="button" aria-haspopup="dialog" title="Choose a model">Default model</button>
+              <button id="effort" class="model" type="button" title="Reasoning effort" disabled>Effort</button>
+              <button id="dictate" class="icon" type="button" aria-label="Dictate a message" title="Dictate a message" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-3 0h6"/></svg></button>
+              <button id="voice" class="icon voice" type="button" aria-label="Voice conversation" title="Voice conversation" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h3l2-7 3 14 3-14 2 7h5"/></svg></button>
+              <button id="stop" class="icon" aria-label="Stop response" type="button" hidden>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+              </button>
+              <button class="send icon" id="send" aria-label="Send message" type="submit" disabled>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="model-dialog" class="menu-panel" role="dialog" aria-label="Choose a model" popover>
+    <label class="sr-only" for="model-filter">Filter models</label>
+    <input id="model-filter" type="search" placeholder="Search models…">
+    <p id="model-status" class="note" role="status"></p>
+    <div id="model-list" class="model-list"></div>
+  </div>
+  <div id="effort-menu" class="menu-panel" popover aria-label="Reasoning effort"></div>
+  <dialog id="session-dialog" aria-labelledby="session-heading">
+    <form id="session-form">
+      <h2 id="session-heading"></h2>
+      <input id="session-name" aria-label="Session name" required>
+      <p id="delete-question"></p>
+      <p id="session-error" class="danger" role="status"></p>
+      <div class="action-footer"><button id="cancel-edit" type="button">Cancel</button><button id="save-edit" type="submit"></button></div>
+    </form>
+  </dialog>
+  <dialog id="settings-dialog" aria-labelledby="settings-heading">
+    <div class="dialog-head"><h2 id="settings-heading">Settings</h2><form method="dialog"><button type="submit" class="icon" aria-label="Close">×</button></form></div>
+    <label class="setting-row" for="appearance">Appearance
+      <select id="appearance">
+        <option value="">Follow Hermes</option>
+        <option value="light">Light · Nous</option>
+        <option value="dark">Dark · Nous</option>
+      </select>
+    </label>
+    <a id="official" class="setting-row" href="/?_styx_view=hermes">Open full Hermes <span aria-hidden="true">↗</span></a>
+    <form id="signout" method="post" action="/logout"><button class="setting-row" type="submit">Sign out of Styx</button></form>
+  </dialog>
+  <noscript><p>Fast needs JavaScript. <a href="/?_styx_view=hermes">Open the official Hermes Webapp</a>.</p></noscript>
+  <!-- STYX_SCRIPT -->
+</body>
+</html>

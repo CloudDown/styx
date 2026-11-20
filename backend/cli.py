@@ -26,13 +26,15 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     ca = subs.add_parser("client-auth", help="Mint a Tor v3 client key")
     ca.add_argument("--name", default="device", help="Label for this client (default: device)")
     subs.add_parser("doctor", help="Check tor, passphrase, webapp, processes")
+    webapp = subs.add_parser("webapp", help="Choose the default browser interface")
+    webapp.add_argument("mode", nargs="?", choices=("hermes", "fast", "status"), default="status")
     subparser.set_defaults(func=styx_command)
 
 
 def styx_command(args: argparse.Namespace) -> int:
     cmd = args.styx_command
     if not cmd:
-        print("usage: hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor}")
+        print("usage: hermes styx {setup,status,start,stop,url,passwd,client-auth,doctor,webapp}")
         return 2
     try:
         if cmd == "status":
@@ -52,10 +54,30 @@ def styx_command(args: argparse.Namespace) -> int:
             return _client_auth(getattr(args, "name", "device"))
         if cmd == "doctor":
             return _doctor()
+        if cmd == "webapp":
+            return _webapp(args.mode)
     except KeyboardInterrupt:
         return 130
     print(f"unknown subcommand: {cmd}")
     return 2
+
+
+def _webapp(mode: str) -> int:
+    from . import fast_webapp, paths
+    from .supervisor import target_name
+
+    try:
+        root = paths.data_dir()
+        if mode == "fast" and target_name() != "webapp":
+            print("styx: Fast requires target=webapp, not dashboard.", file=sys.stderr)
+            return 1
+        if mode != "status":
+            fast_webapp.write_mode(root, mode)
+        print(f"webapp: {fast_webapp.read_mode(root)}")
+        return 0
+    except OSError as exc:
+        print(f"styx: {exc}", file=sys.stderr)
+        return 1
 
 
 def _status() -> int:

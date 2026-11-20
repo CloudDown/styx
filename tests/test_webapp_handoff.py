@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import secrets
 import subprocess
 import sys
@@ -15,7 +17,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import gate, passwords, sessions, webapp_handoff as handoff  # noqa: E402
+from styx.backend import fast_webapp, gate, passwords, sessions, webapp_handoff as handoff  # noqa: E402
 from test_gate_regressions import Chunks, Transport  # noqa: E402
 
 TICKET = "t" * 43
@@ -186,6 +188,92 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.browser.post("/webapp/window-session")).status_code, 303)
         self.issue.assert_not_called()
         self.assertFalse(self.upstream_calls)
+
+    async def test_fast_shell_and_connect_are_unavailable_before_cerberus(self):
+        fast_webapp.write_mode(self.root, "fast")
+        for path in (fast_webapp.FAST, fast_webapp.MARKDOWN, fast_webapp.FAST + "/connect", "/?_styx_view=fast"):
+            self.assertEqual((await self.browser.get(path)).status_code, 303)
+        self.issue.assert_not_called()
+        self.assertFalse(self.upstream_calls)
+
+    async def test_fast_shows_shell_before_cli_and_reuses_native_grant_on_reload(self):
+        fast_webapp.write_mode(self.root, "fast")
+        response = await self.login(next_path="/?profile=main")
+        self.assertEqual(response.headers["location"], fast_webapp.FAST + "?profile=main")
+        shell = await self.browser.get(response.headers["location"], headers={"Accept-Encoding": "gzip"})
+        self.assertIn("Chat with Hermes", shell.text)
+        self.assertEqual(shell.headers["cache-control"], "private, no-cache")
+        self.assertEqual(shell.headers["content-encoding"], "gzip")
+        self.assertIn("frame-ancestors 'none'", shell.headers["content-security-policy"])
+        # Budget, not a target: the shell stays ~40x below the official Webapp's
+        # ~1.15 MB (gzip) because it ships no framework, and reloads revalidate
+        # to a 304 instead of re-downloading it.
+        self.assertLess(int(shell.headers["content-length"]), 26_000)
+        warm = await self.browser.get(shell.request.url, headers={
+            "Accept-Encoding": "gzip", "If-None-Match": shell.headers["etag"]})
+        self.assertEqual(warm.status_code, 304)
+        self.assertEqual(await warm.aread(), b"")
+        lexer = await self.browser.get(fast_webapp.MARKDOWN, headers={"Accept-Encoding": "gzip"})
+        self.assertEqual(lexer.status_code, 200)
+        self.assertEqual(lexer.headers["content-encoding"], "gzip")
+        integrity = base64.b64encode(hashlib.sha256(lexer.content).digest()).decode()
+        self.assertIn("sha256-" + integrity, shell.text)
+        self.assertEqual((await self.browser.head(fast_webapp.FAST + "/connect")).status_code, 405)
+        self.issue.assert_not_called()
+        no_native = await self.browser.get("/api/profiles")
+        self.assertEqual(no_native.status_code, 401)
+
+        launch = await self.browser.get(fast_webapp.FAST + "/connect?profile=main")
+        link = urlsplit(launch.headers["location"])
+        self.assertEqual(link.path, "/webapp/launch")
+        fragment = parse_qs(link.fragment)
+        self.assertEqual((await self.browser.get(link.path)).status_code, 200)
+        exchange = await self.browser.post("/webapp/window-session", headers={
+            "X-Hermes-Window-Ticket": fragment["ticket"][0],
+        })
+        self.assertEqual(exchange.status_code, 200)
+        final = await self.browser.get("/?" + fragment["query"][0])
+        self.assertEqual(final.status_code, 200)
+        self.assertIn("Styx Fast", final.text)
+        self.assertEqual((await self.browser.get("/?" + fragment["query"][0])).status_code, 303)
+        self.assertEqual((await self.browser.get(fast_webapp.FAST + "?profile=main")).status_code, 200)
+        self.assertEqual(self.issue.call_count, 1)
+
+    async def test_fast_default_can_open_unmodified_official_webapp(self):
+        await self.login()
+        fast_webapp.write_mode(self.root, "fast")
+        self.assertEqual((await self.browser.get("/")).headers["location"], fast_webapp.FAST)
+        token, _ = await self.complete(await self.browser.get("/?_styx_view=hermes&profile=main"))
+        self.assertEqual(token, self.native_token)
+        self.assertEqual(dict(self.upstream_calls[-1].url.params), {"profile": "main"})
+        fast_webapp.write_mode(self.root, "hermes")
+        self.assertEqual(urlsplit((await self.browser.get("/")).headers["location"]).path, "/webapp/launch")
+
+    async def test_fast_respects_extra_provider_and_password_rotation(self):
+        await self.login()
+        self.issue.side_effect = None
+        self.issue.return_value = None
+        response = await self.browser.get(fast_webapp.FAST + "/connect")
+        self.assertEqual(response.headers["location"], "/?_styx_view=hermes")
+        self.assertEqual((await self.browser.get(response.headers["location"])).status_code, 200)
+        passwords.write_hash(self.root / "passwd", "replacement")
+        self.assertEqual((await self.browser.get(fast_webapp.FAST)).status_code, 303)
+
+    async def test_unconfigured_or_invalid_mode_opens_native_hermes(self):
+        mode_file = self.root / "webapp-mode"
+        self.assertFalse(mode_file.exists())
+        self.assertEqual(fast_webapp.read_mode(self.root), "hermes")
+        first = await self.login(next_path="/")
+        self.assertEqual(urlsplit(first.headers["location"]).path, "/webapp/launch")
+        token, _ = await self.complete(first)
+        self.assertEqual(token, self.native_token)
+
+        for invalid in (b"unknown\n", b"\xff"):
+            with self.subTest(mode=invalid):
+                mode_file.write_bytes(invalid)
+                self.assertEqual(fast_webapp.read_mode(self.root), "hermes")
+                reopened = await self.browser.get("/")
+                self.assertEqual(urlsplit(reopened.headers["location"]).path, "/webapp/launch")
 
     async def test_password_login_native_exchange_workspace_and_authenticated_api(self):
         response = await self.login(next_path="/?profile=other&session=chat")

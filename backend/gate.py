@@ -16,7 +16,7 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import httpx
 import uvicorn
@@ -27,6 +27,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from . import headers as hdrs
+from . import fast_webapp
 from . import login_page
 from . import passwords
 from . import paths
@@ -43,6 +44,12 @@ _LOGIN_MAX_BYTES = 16 * 1024
 _LOGIN_TIMEOUT = 10.0
 _LOGIN_DELAY = 0.4
 _SESSION_CHECK_INTERVAL = 1.0
+_NO_STORE = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+
+
+def _fast_path(query) -> str:
+    profile = query.get("profile")
+    return fast_webapp.FAST + ("?" + urlencode({"profile": profile}) if profile else "")
 
 
 class _LoginLimiter:
@@ -220,7 +227,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if not nxt.startswith("/") or nxt.startswith(("//", "/\\")):
             nxt = "/"
         launch_started = time.monotonic()
-        if handoff and urlsplit(nxt).path == "/":
+        root_query = dict(parse_qsl(urlsplit(nxt).query)) if handoff and nxt.startswith("/") else {}
+        if (handoff and urlsplit(nxt).path == "/" and root_query.get(fast_webapp.VIEW_QUERY) != "hermes"
+                and fast_webapp.read_mode(data_dir) == "fast"):
+            resp = RedirectResponse(_fast_path(root_query), status_code=303)
+        elif handoff and urlsplit(nxt).path == "/":
             try:
                 # The password is already verified. Skip the otherwise redundant
                 # round trip through GET /, without pre-issuing/caching a ticket.
@@ -247,6 +258,37 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         resp.delete_cookie(sessions.COOKIE, path="/")
         return resp
 
+    async def fast_shell(request: Request) -> Response:
+        if not authed(request):
+            return RedirectResponse("/login", status_code=303, headers=_NO_STORE)
+        if request.url.path == fast_webapp.MARKDOWN:
+            return fast_webapp.markdown_response(request.headers.get("accept-encoding", ""))
+        return fast_webapp.response(request.headers.get("accept-encoding", ""),
+                                    request.headers.get("if-none-match", ""))
+
+    async def fast_connect(request: Request) -> Response:
+        if not authed(request):
+            return RedirectResponse("/login", status_code=303, headers=_NO_STORE)
+        if request.method != "GET":
+            return Response(status_code=405, headers={**_NO_STORE, "Allow": "GET"})
+        # An explicit account provider continues to use the official Webapp.
+        # Fast never attempts to mint or proxy a different authorization.
+        query = {fast_webapp.VIEW_QUERY: "fast"}
+        if profile := request.query_params.get("profile"):
+            query["profile"] = profile
+        started = time.monotonic()
+        try:
+            target = await handoff.launch(request.cookies[sessions.COOKIE], urlencode(query))
+        except HandoffError as exc:
+            return HTMLResponse(str(exc), status_code=503, headers=_NO_STORE)
+        if not authed(request):
+            return RedirectResponse("/login", status_code=303, headers=_NO_STORE)
+        if target is None:
+            query[fast_webapp.VIEW_QUERY] = "hermes"
+        return RedirectResponse(target or ("/?" + urlencode(query)), status_code=303, headers={
+            **_NO_STORE, "Server-Timing": f"styx-launch;dur={(time.monotonic() - started) * 1000:.1f}",
+        })
+
     async def proxy_http(request: Request) -> Response:
         if not authed(request):
             if request.url.path == "/favicon.ico":
@@ -260,7 +302,13 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         query = request.url.query
         if handoff and request.method == "GET" and request.url.path == "/":
             session = request.cookies.get(sessions.COOKIE) or ""
-            if not handoff.consume(request.query_params.get(ENTRY_QUERY), session):
+            view = request.query_params.get(fast_webapp.VIEW_QUERY)
+            consumed = handoff.consume(request.query_params.get(ENTRY_QUERY), session)
+            if consumed and view == "fast":
+                return fast_webapp.response(request.headers.get("accept-encoding", ""))
+            if view == "fast" or (not consumed and view != "hermes" and fast_webapp.read_mode(data_dir) == "fast"):
+                return RedirectResponse(_fast_path(request.query_params), status_code=303, headers=_NO_STORE)
+            if not consumed:
                 launch_started = time.monotonic()
                 try:
                     target = await handoff.launch(session, query)
@@ -277,6 +325,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                         "Server-Timing": f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}",
                     })
             query = strip_entry_query(query)
+            if view is not None:
+                query = urlencode([(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
+                                   if k != fast_webapp.VIEW_QUERY])
         url = upstream_base + request.url.path
         if query:
             url += "?" + query
@@ -390,6 +441,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             Route("/login", login_get, methods=["GET"]),
             Route("/login", login_post, methods=["POST"]),
             Route("/logout", logout, methods=["GET", "POST"]),
+            *([Route(fast_webapp.FAST, fast_shell, methods=["GET"]),
+               Route(fast_webapp.MARKDOWN, fast_shell, methods=["GET"]),
+               Route(fast_webapp.FAST + "/connect", fast_connect, methods=["GET"])] if handoff else []),
             WebSocketRoute("/{path:path}", proxy_ws),
             Route("/{path:path}", proxy_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),
         ],

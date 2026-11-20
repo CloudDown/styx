@@ -125,7 +125,8 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         compressed = accepts_gzip(request.headers.get("accept-encoding", ""))
         def render():
             body = login_page.render(error=error, csrf=csrf).encode("utf-8")
-            return gzip.compress(body, compresslevel=1, mtime=0) if compressed else body
+            # Level 1 can barely compress the inline JPEG on some zlib builds.
+            return gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
         async with render_slots:
             work = asyncio.create_task(asyncio.to_thread(render))
             cancelled = False

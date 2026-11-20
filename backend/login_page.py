@@ -22,7 +22,7 @@ def render(error: str = "", csrf: str = "") -> str:
     )
     error_attrs = ' aria-invalid="true" aria-describedby="error"' if error else ""
     return f"""<!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -109,14 +109,14 @@ def render(error: str = "", csrf: str = "") -> str:
 </style>
 </head>
 <body>
-<main aria-label="Connexion Styx">
+<main aria-label="Styx login">
   <form method="post" action="/login">
     <input type="hidden" name="csrf" value="{csrf_e}">
     <div class="field">
       <input id="password" name="password" type="password" required
              autocomplete="current-password" aria-label="Password"
              placeholder="Password"{error_attrs}>
-      <button type="submit" aria-label="Se connecter">
+      <button type="submit" aria-label="Sign in">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
              aria-hidden="true">

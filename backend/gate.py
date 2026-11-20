@@ -181,7 +181,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     async def login_post(request: Request) -> Response:
         delay = limiter.reserve()
         if delay is None:
-            resp = await login_response(request, "Réessaie plus tard.", 429)
+            resp = await login_response(request, "Too many attempts. Try again later.", 429)
             resp.headers["Retry-After"] = str(_FAIL_WINDOW)
             return resp
         success = False
@@ -191,13 +191,13 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 async with asyncio.timeout(_LOGIN_TIMEOUT):
                     async for chunk in request.stream():
                         if len(body) + len(chunk) > _LOGIN_MAX_BYTES:
-                            return await login_response(request, "Formulaire trop volumineux.", 413)
+                            return await login_response(request, "Form submission is too large.", 413)
                         body.extend(chunk)
                 form = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=8)
             except TimeoutError:
-                return await login_response(request, "Formulaire trop lent.", 408)
+                return await login_response(request, "Form submission timed out.", 408)
             except ValueError:
-                return await login_response(request, "Formulaire invalide.", 400)
+                return await login_response(request, "Invalid form submission.", 400)
             csrf_form = form.get("csrf", [""])[0]
             csrf_cookie = request.cookies.get(sessions.CSRF_COOKIE) or ""
             password = form.get("password", [""])[0]
@@ -207,10 +207,10 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             )
             stored = passwords.read_hash(passwd_file)
             if not ok_csrf or not stored or not await verify(password, stored):
-                return await login_response(request, "Mot de passe incorrect.", 401)
+                return await login_response(request, "Incorrect password.", 401)
             # Reject a login whose password was replaced during verification.
             if passwords.read_hash(passwd_file) != stored:
-                return await login_response(request, "Réessaie.", 401)
+                return await login_response(request, "Please try again.", 401)
             token = sessions.issue(sessions.password_key(secret, stored))
             success = True
         finally:
@@ -228,7 +228,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             except HandoffError as exc:
                 resp = HTMLResponse(str(exc), status_code=503)
             if passwords.read_hash(passwd_file) != stored:
-                return await login_response(request, "Réessaie.", 401)
+                return await login_response(request, "Please try again.", 401)
             resp.headers["Server-Timing"] = f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}"
         else:
             resp = RedirectResponse(nxt, status_code=303)

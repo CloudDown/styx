@@ -6,11 +6,11 @@ import { jsx } from 'react/jsx-runtime'
 
 const ID = 'styx'
 
-function Chip() {
+function Chip({ ctx }) {
   const t = usePluginI18n(ID)
   const { data } = useQuery({
     queryKey: ['styx', 'status'],
-    queryFn: fetchStatus,
+    queryFn: () => fetchStatus(ctx),
     refetchInterval: 8000,
   })
   const up = !!(data && data.running)
@@ -32,11 +32,9 @@ function Chip() {
   })
 }
 
-async function fetchStatus() {
+async function fetchStatus(ctx) {
   try {
-    const r = await fetch('/api/plugins/styx/status')
-    if (!r.ok) return { running: false }
-    return await r.json()
+    return await ctx.rest('/status')
   } catch {
     return { running: false }
   }
@@ -61,7 +59,7 @@ export default {
       id: 'styx-chip',
       area: 'statusBar.right',
       order: 80,
-      render: Chip,
+      render: () => jsx(Chip, { ctx }),
     })
   },
 }

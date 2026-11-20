@@ -40,6 +40,9 @@ class LoginAndSessions(unittest.TestCase):
 
     def test_login_initial_state_has_no_error(self):
         html = login_page.render()
+        self.assertIn('<html lang="en">', html)
+        self.assertIn('<main aria-label="Styx login">', html)
+        self.assertIn('<button type="submit" aria-label="Sign in">', html)
         self.assertIn('placeholder="Password"', html)
         self.assertIn('aria-label="Password"', html)
         self.assertNotIn('role="alert"', html)

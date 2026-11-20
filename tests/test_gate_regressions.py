@@ -227,6 +227,7 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         with patch.object(passwords, "verify_password", side_effect=verify):
             response = await self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
         self.assertEqual(response.status_code, 401)
+        self.assertIn('<p id="error" role="alert">Incorrect password.</p>', response.text)
 
     async def test_slow_login_has_a_deadline(self):
         async def chunks():

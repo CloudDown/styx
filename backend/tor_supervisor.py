@@ -20,6 +20,7 @@ from .platform_support import detached_process_options
 from .storage import write_private
 
 _IS_LINUX = sys.platform == "linux"
+_TOR_ENV_KEYS = ("PATH", "HOME", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR")
 
 
 class TorError(RuntimeError):
@@ -135,12 +136,15 @@ def start_tor(data_dir: Path, gate_port: int, *, client_auth: bool = False) -> s
     torrc = write_torrc(data_dir, gate_port, client_auth)
     log = paths.tor_log_path(data_dir)
     log.parent.mkdir(parents=True, exist_ok=True)
+    # Tor must not inherit Hermes provider credentials or profile settings.
+    env = {key: value for key in _TOR_ENV_KEYS if (value := os.environ.get(key)) is not None}
     with open(log, "ab", buffering=0) as log_f:
         proc = subprocess.Popen(
             [binary, "-f", str(torrc)],
             stdin=subprocess.DEVNULL,
             stdout=log_f,
             stderr=subprocess.STDOUT,
+            env=env,
             **detached_process_options(),
             close_fds=True,
         )

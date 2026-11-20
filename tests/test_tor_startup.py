@@ -32,6 +32,22 @@ class TorStartup(unittest.TestCase):
         self.assertIn("Log notice stdout\n", text)
         self.assertNotIn("Log notice file", text)
 
+    def test_tor_inherits_only_allowlisted_environment_variables(self):
+        allowed = {"PATH": "test-path", "HOME": "test-home", "SYSTEMROOT": "test-windows",
+                   "TEMP": "test-temp", "TMP": "test-tmp", "TMPDIR": "test-tmpdir"}
+        parent = {**allowed, "OPENAI_API_KEY": "test-secret", "HERMES_HOME": "test-profile"}
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with (
+                patch.dict(os.environ, parent, clear=True),
+                patch.object(tor, "tor_binary", return_value="test-tor"),
+                patch.object(tor, "write_torrc", return_value=root / "torrc"),
+                patch.object(tor.subprocess, "Popen") as spawn,
+                patch.object(tor, "write_pid"),
+            ):
+                tor.start_tor(root, 9130)
+        self.assertEqual(spawn.call_args.kwargs.get("env"), allowed)
+
     def test_dead_child_reports_exit_and_log_instead_of_pid_timeout(self):
         process = Mock(returncode=1)
         process.poll.return_value = 1

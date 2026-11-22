@@ -51,9 +51,9 @@ _SESSION_CHECK_INTERVAL = 1.0
 _NO_STORE = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
-def _fast_path(query) -> str:
-    profile = query.get("profile")
-    return fast_webapp.FAST + ("?" + urlencode({"profile": profile}) if profile else "")
+def _fast_path(query, path=fast_webapp.FAST) -> str:
+    scope = {key: query[key] for key in ("profile", "session") if query.get(key)}
+    return path + ("?" + urlencode(scope) if scope else "")
 
 
 class _LoginLimiter:
@@ -121,6 +121,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     hash_slots = asyncio.Semaphore(2)
     render_slots = asyncio.Semaphore(2)
     handoff = WebappHandoff(upstream_host, upstream_port) if webapp_handoff else None
+    login_backgrounds = {
+        login_page.background_url(variant): variant for variant in login_page.BACKGROUND_SIZES
+    }
 
     def auth_key() -> bytes | None:
         stored = passwords.read_hash(passwd_file)
@@ -164,8 +167,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         return resp
 
     async def login_background(request: Request) -> Response:
-        image = login_page.background_bytes()
-        etag = '"' + login_page.background_url().rsplit("-", 1)[1].removesuffix(".jpg") + '"'
+        variant = login_backgrounds[request.url.path]
+        image = login_page.background_bytes(variant)
+        etag = '"' + login_page.background_url(variant).rsplit("-", 1)[1].removesuffix(".webp") + '"'
         headers = {
             "Cache-Control": "public, max-age=31536000, immutable",
             "ETag": etag,
@@ -174,7 +178,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         tags = request.headers.get("if-none-match", "").split(",")
         if any(tag.strip().removeprefix("W/") in (etag, "*") for tag in tags):
             return Response(status_code=304, headers=headers)
-        return Response(image, media_type="image/jpeg", headers=headers)
+        return Response(image, media_type="image/webp", headers=headers)
 
     async def verify(password: str, stored: str) -> bool:
         async with hash_slots:
@@ -284,11 +288,14 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
 
     async def fast_shell(request: Request) -> Response:
         if not authed(request):
-            return RedirectResponse("/login", status_code=303, headers=_NO_STORE)
-        if request.url.path == fast_webapp.MARKDOWN:
-            return fast_webapp.markdown_response(request.headers.get("accept-encoding", ""))
-        return fast_webapp.response(request.headers.get("accept-encoding", ""),
-                                    request.headers.get("if-none-match", ""))
+            return RedirectResponse("/login?" + urlencode({"next": _fast_path(request.query_params)}),
+                                    status_code=303, headers=_NO_STORE)
+        return fast_webapp.response(data_dir, app=request.url.path == fast_webapp.APP)
+
+    async def fast_asset(request: Request) -> Response:
+        if not authed(request):
+            return Response(status_code=401, headers=_NO_STORE)
+        return fast_webapp.asset(data_dir, request.path_params["generation"], request.path_params["asset"], request)
 
     async def fast_connect(request: Request) -> Response:
         if not authed(request):
@@ -298,8 +305,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         # An explicit account provider continues to use the official Webapp.
         # Fast never attempts to mint or proxy a different authorization.
         query = {fast_webapp.VIEW_QUERY: "fast"}
-        if profile := request.query_params.get("profile"):
-            query["profile"] = profile
+        for key in ("profile", "session"):
+            if value := request.query_params.get(key):
+                query[key] = value
         started = time.monotonic()
         try:
             target = await handoff.launch(request.cookies[sessions.COOKIE], urlencode(query))
@@ -420,7 +428,8 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             if view == "tui" or (not consumed and view != "hermes" and mode == "tui"):
                 return RedirectResponse(tui_webapp.TUI, status_code=303, headers=_NO_STORE)
             if consumed and view == "fast":
-                return fast_webapp.response(request.headers.get("accept-encoding", ""))
+                return RedirectResponse(_fast_path(request.query_params, fast_webapp.APP),
+                                        status_code=303, headers=_NO_STORE)
             if view == "fast" or (not consumed and view != "hermes" and mode == "fast"):
                 return RedirectResponse(_fast_path(request.query_params), status_code=303, headers=_NO_STORE)
             if handoff and not consumed:
@@ -554,7 +563,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     return Starlette(
         routes=[
             # Fixed, content-addressed public artwork only: no asset directory.
-            Route(login_page.background_url(), login_background, methods=["GET"]),
+            *(Route(url, login_background, methods=["GET"]) for url in login_backgrounds),
             Route("/login", login_get, methods=["GET"]),
             Route("/login", login_post, methods=["POST"]),
             Route("/logout", logout, methods=["GET", "POST"]),
@@ -562,7 +571,8 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             Route(tui_webapp.TUI, tui_shell, methods=["GET"]),
             Route(tui_webapp.TUI + "/{asset}", tui_asset, methods=["GET"]),
             *([Route(fast_webapp.FAST, fast_shell, methods=["GET"]),
-               Route(fast_webapp.MARKDOWN, fast_shell, methods=["GET"]),
+               Route(fast_webapp.APP, fast_shell, methods=["GET"]),
+               Route(fast_webapp.FAST + "/build/{generation}/{asset:path}", fast_asset, methods=["GET"]),
                Route(fast_webapp.FAST + "/connect", fast_connect, methods=["GET"])] if handoff else []),
             WebSocketRoute(tui_webapp.SOCKET, tui_socket),
             WebSocketRoute("/{path:path}", proxy_ws),

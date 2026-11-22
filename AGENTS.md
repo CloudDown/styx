@@ -34,7 +34,7 @@ Tor Browser → http://<v3>.onion
 | `backend/webapp_ensure.py` | enable webapp + bring up gateway |
 | `backend/gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
 | `backend/webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
-| `backend/fast_webapp.py`, `assets/fast/` | opt-in chat client using the same native browser grant and documented gateway RPC |
+| `backend/fast_webapp.py`, `frontend/webapp-fast/` | separate, pruned build of the official renderer using the same native browser grant; scope in `docs/FAST.md` |
 | `backend/tui_webapp.py`, `assets/tui/` | opt-in terminal page; vendored xterm.js, no external assets |
 | `backend/terminal.py` | POSIX PTY running the fixed `hermes --tui`; never a client-chosen command |
 | `backend/headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
@@ -76,7 +76,7 @@ No pytest in the Hermes venv — use stdlib `unittest`.
 
 - Public plugin API only (`hermes_cli.config`, `plugins.plugin_storage`, …). `hermes plugins validate` must stay green.
 - Do not monkeypatch Hermes core.
-- Login page: no external network. Local painting in `assets/login-background.jpg` served at a content-addressed same-origin URL; only that public artwork is immutable, never the form/CSRF. Minimal glass password field.
+- Login page: no external network. Master painting in `assets/login-background.jpg`; prebuilt centered WebP crops in `assets/login/` selected natively by viewport via `<picture>`. Only those fixed, content-addressed public artwork URLs are immutable, never the form/CSRF. No request-time image processing. Minimal glass password field; mobile safe areas and keyboard-aware layout.
 - Private webapp tabs need Hermes' native sessionStorage grant. After valid
   Cerberus auth, use public `hermes webapp --no-open --skip-build` and the
   official /webapp/launch → /webapp/window-session flow. Never read native

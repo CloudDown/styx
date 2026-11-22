@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import sys
 import tempfile
@@ -26,14 +27,46 @@ class LoginAndSessions(unittest.TestCase):
         self.assertIn("backdrop-filter: blur(", html)
         self.assertNotIn("<footer", lowered)
         self.assertNotIn("<h1", lowered)
-        image = Path(__file__).resolve().parents[1] / "assets/login-background.jpg"
+        image = Path(__file__).resolve().parents[1] / "assets/login/landscape-1600.webp"
         self.assertEqual(login_page.background_bytes(), image.read_bytes())
         digest = hashlib.sha256(image.read_bytes()).hexdigest()
-        self.assertIn(f"/_styx/login-background-{digest}.jpg", html)
-        self.assertIn('rel="preload" as="image"', html)
+        self.assertIn(f"/_styx/login-background-landscape-1600-{digest}.webp", html)
+        self.assertIn("<picture", html)
+        self.assertIn('fetchpriority="high"', html)
+        self.assertNotIn('rel="preload"', html)
         self.assertIn("autofocus", html)
-        self.assertNotIn("base64,", html)
-        self.assertLess(len(html.encode()), 6000)
+        self.assertNotIn("data:image/jpeg;base64,", html)
+        preview = html.split("data:image/webp;base64,", 1)[1].split('"', 1)[0]
+        self.assertLess(len(base64.b64decode(preview)), 1024)
+        self.assertLess(len(html.encode()), 7000)
+
+    def test_backgrounds_are_bounded_local_crops_not_arbitrary_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        original_size = (root / "assets/login-background.jpg").stat().st_size
+        for variant in login_page.BACKGROUND_SIZES:
+            image = login_page.background_bytes(variant)
+            self.assertEqual(image[:4], b"RIFF")
+            self.assertEqual(image[8:12], b"WEBP")
+            self.assertLess(len(image), original_size // 3)
+            self.assertIn(hashlib.sha256(image).hexdigest(), login_page.background_url(variant))
+        self.assertLess(len(login_page.background_bytes("portrait-640")), 100_000)
+        for variant in ("../passwd", "original", "portrait-99999"):
+            with self.assertRaises(ValueError):
+                login_page.background_bytes(variant)
+
+    def test_mobile_layout_and_native_resolution_selection(self):
+        html = login_page.render()
+        self.assertIn('media="(max-width: 600px), (max-aspect-ratio: 3/5)"', html)
+        self.assertIn('media="(max-aspect-ratio: 1/1)"', html)
+        self.assertIn('media="(max-aspect-ratio: 2/1)"', html)
+        self.assertIn('sizes="100vw"', html)
+        self.assertIn("viewport-fit=cover", html)
+        self.assertIn("interactive-widget=resizes-content", html)
+        self.assertIn("env(safe-area-inset-bottom", html)
+        self.assertIn('enterkeyhint="go"', html)
+        self.assertNotIn("<script", html)
+        self.assertNotIn("maximum-scale", html)
+        self.assertNotIn("user-scalable", html)
 
     def test_login_errors_and_csrf_are_escaped(self):
         html = login_page.render(error="<script>bad</script>", csrf='"><bad>')

@@ -41,14 +41,14 @@ Les lancements sont limités en concurrence et en nombre de passages en attente.
 ### Styx Fast (optionnel)
 
 ```bash
-hermes styx webapp fast     # ouvrir le client léger par défaut
+hermes styx webapp fast     # compiler au besoin et ouvrir la copie réduite par défaut
 hermes styx webapp hermes   # revenir à la webapp officielle
 hermes styx webapp status   # afficher le mode enregistré
 ```
 
-Le choix est propre au profil et s'applique à la prochaine ouverture de l'adresse principale avec un gate à jour. `hermes` reste le défaut. Après mise à jour depuis une version sans Fast, redémarrez Styx (pas la passerelle) pour charger le nouveau code. Fast est disponible pour `target: webapp`, pas pour le dashboard.
+Le choix est propre au profil et s'applique à la prochaine ouverture de l'adresse principale avec un gate à jour. `hermes` reste le défaut. Après mise à jour du plugin, redémarrez Styx pour charger le nouveau code. Fast est disponible pour `target: webapp`, pas pour le dashboard.
 
-Fast sert un document HTML léger, sans framework ni police externe. Il affiche les sessions récentes, charge l'historique par pages et utilise le WebSocket canonique d'Hermes pour créer ou reprendre des sessions, envoyer des messages et recevoir ou arrêter une réponse. Le sélecteur de modèles contacte Hermes uniquement à son ouverture ; le choix s'applique au prochain message. La configuration globale du modèle ne change pas. Les pièces jointes et enregistrements demandés par l'utilisateur sont transmis à la même instance Hermes. Depuis **Settings → Open full Hermes**, vous pouvez ouvrir l'interface officielle pour les outils, les approbations et les réglages avancés.
+Fast compile une copie du code officiel avec son vrai fil de chat et son éditeur React, sans les autres écrans. Consultez le [périmètre conservé](FAST.md). La compilation demande Node.js 26 ou plus récent, Git et une copie source propre d’Hermes à la révision indiquée dans [`frontend/webapp-fast/build.mjs`](../frontend/webapp-fast/build.mjs), avec ses dépendances Webapp (`hermes webapp --build-only`). La compilation est réutilisée lors des bascules suivantes. Pour compiler depuis un autre checkout, utilisez `hermes styx webapp fast --source /chemin/vers/hermes-agent`. **Settings → Open full Hermes** ouvre toujours la Webapp officielle.
 
 La page Cerberus ne change pas. Fast ne réutilise que l'autorisation native encore valide de l'onglet ; sinon il passe par le lancement officiel et l'échange à usage unique. Une installation qui exige une connexion Hermes supplémentaire ouvre l'interface officielle. Fast nécessite un Hermes dont le WebSocket prend en charge `hermes-gateway-v1` et les sessions GUI. Le service Hermes, ses données et ses fichiers ne sont pas modifiés.
 
@@ -56,7 +56,7 @@ La page Cerberus ne change pas. Fast ne réutilise que l'autorisation native enc
 
 ```bash
 hermes styx webapp tui      # terminal Hermes par défaut
-hermes styx webapp fast     # revenir au client léger
+hermes styx webapp fast     # revenir à la copie réduite
 hermes styx webapp hermes   # revenir à la webapp officielle
 ```
 

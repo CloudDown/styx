@@ -1,8 +1,8 @@
-"""Minimal, self-contained login page. No external requests or JavaScript."""
+"""Minimal login page with a same-origin, cacheable painting. No JavaScript."""
 
 from __future__ import annotations
 
-import base64
+import hashlib
 import html as htmlmod
 from functools import lru_cache
 
@@ -10,9 +10,16 @@ from .paths import PLUGIN_ROOT
 
 
 @lru_cache(maxsize=1)
-def _background() -> str:
+def background_bytes() -> bytes:
     image = PLUGIN_ROOT / "assets" / "login-background.jpg"
-    return "data:image/jpeg;base64," + base64.b64encode(image.read_bytes()).decode("ascii")
+    return image.read_bytes()
+
+
+@lru_cache(maxsize=1)
+def background_url() -> str:
+    # Only the public painting is cacheable; never the form or its CSRF token.
+    digest = hashlib.sha256(background_bytes()).hexdigest()
+    return f"/_styx/login-background-{digest}.jpg"
 
 
 def render(error: str = "", csrf: str = "") -> str:
@@ -29,6 +36,7 @@ def render(error: str = "", csrf: str = "") -> str:
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <title>Styx</title>
+<link rel="preload" as="image" href="{background_url()}" fetchpriority="high">
 <style>
   * {{ box-sizing: border-box; }}
   html {{ background: #292a28; }}
@@ -44,14 +52,25 @@ def render(error: str = "", csrf: str = "") -> str:
     background-position: center;
     background-size: cover;
     background-repeat: no-repeat;
+    background-image: url("{background_url()}");
   }}
   main {{ position: relative; width: min(320px, 100%); }}
   .field {{
+    position: relative;
+    isolation: isolate;
     display: flex;
     align-items: center;
     padding: 5px;
     border: 1px solid rgba(255, 255, 255, .35);
     border-radius: 999px;
+  }}
+  .field::before {{
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
     background: rgba(20, 24, 26, .38);
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
@@ -113,7 +132,7 @@ def render(error: str = "", csrf: str = "") -> str:
   <form method="post" action="/login">
     <input type="hidden" name="csrf" value="{csrf_e}">
     <div class="field">
-      <input id="password" name="password" type="password" required
+      <input id="password" name="password" type="password" required autofocus
              autocomplete="current-password" aria-label="Password"
              placeholder="Password"{error_attrs}>
       <button type="submit" aria-label="Sign in">
@@ -127,7 +146,6 @@ def render(error: str = "", csrf: str = "") -> str:
     {banner}
   </form>
 </main>
-<style>body {{ background-image: url("{_background()}"); }}</style>
 </body>
 </html>
 """

@@ -9,7 +9,9 @@ import argparse
 import asyncio
 import gzip
 import hmac
+import json
 import logging
+import os
 import re
 import sys
 import time
@@ -32,6 +34,8 @@ from . import login_page
 from . import passwords
 from . import paths
 from . import sessions
+from . import terminal
+from . import tui_webapp
 from .asset_transfer import accepts_gzip, compressible_asset, gzip_headers, gzip_stream
 from .network import require_loopback
 from .webapp_handoff import ENTRY_QUERY, HandoffError, WebappHandoff, strip_entry_query
@@ -132,7 +136,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         compressed = accepts_gzip(request.headers.get("accept-encoding", ""))
         def render():
             body = login_page.render(error=error, csrf=csrf).encode("utf-8")
-            # Level 1 can barely compress the inline JPEG on some zlib builds.
+            # The form is tiny; the public painting has its own immutable URL.
             return gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
         async with render_slots:
             work = asyncio.create_task(asyncio.to_thread(render))
@@ -158,6 +162,19 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             max_age=600, path="/login",
         )
         return resp
+
+    async def login_background(request: Request) -> Response:
+        image = login_page.background_bytes()
+        etag = '"' + login_page.background_url().rsplit("-", 1)[1].removesuffix(".jpg") + '"'
+        headers = {
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+        }
+        tags = request.headers.get("if-none-match", "").split(",")
+        if any(tag.strip().removeprefix("W/") in (etag, "*") for tag in tags):
+            return Response(status_code=304, headers=headers)
+        return Response(image, media_type="image/jpeg", headers=headers)
 
     async def verify(password: str, stored: str) -> bool:
         async with hash_slots:
@@ -209,15 +226,18 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             csrf_form = form.get("csrf", [""])[0]
             csrf_cookie = request.cookies.get(sessions.CSRF_COOKIE) or ""
             password = form.get("password", [""])[0]
-            await asyncio.sleep(delay)
             ok_csrf = bool(csrf_form) and hmac.compare_digest(
                 csrf_form.encode("utf-8"), csrf_cookie.encode("utf-8"),
             )
             stored = passwords.read_hash(passwd_file)
             if not ok_csrf or not stored or not await verify(password, stored):
+                # Keep the full backoff and pending reservation for failures,
+                # without slowing down a successfully authenticated user.
+                await asyncio.sleep(delay)
                 return await login_response(request, "Incorrect password.", 401)
             # Reject a login whose password was replaced during verification.
             if passwords.read_hash(passwd_file) != stored:
+                await asyncio.sleep(delay)
                 return await login_response(request, "Please try again.", 401)
             token = sessions.issue(sessions.password_key(secret, stored))
             success = True
@@ -227,9 +247,13 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if not nxt.startswith("/") or nxt.startswith(("//", "/\\")):
             nxt = "/"
         launch_started = time.monotonic()
-        root_query = dict(parse_qsl(urlsplit(nxt).query)) if handoff and nxt.startswith("/") else {}
-        if (handoff and urlsplit(nxt).path == "/" and root_query.get(fast_webapp.VIEW_QUERY) != "hermes"
-                and fast_webapp.read_mode(data_dir) == "fast"):
+        root_query = dict(parse_qsl(urlsplit(nxt).query)) if nxt.startswith("/") else {}
+        mode = fast_webapp.read_mode(data_dir)
+        if (urlsplit(nxt).path == "/" and root_query.get(fast_webapp.VIEW_QUERY) != "hermes"
+                and mode == "tui"):
+            resp = RedirectResponse(tui_webapp.TUI, status_code=303)
+        elif (handoff and urlsplit(nxt).path == "/" and root_query.get(fast_webapp.VIEW_QUERY) != "hermes"
+                and mode == "fast"):
             resp = RedirectResponse(_fast_path(root_query), status_code=303)
         elif handoff and urlsplit(nxt).path == "/":
             try:
@@ -289,6 +313,94 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             **_NO_STORE, "Server-Timing": f"styx-launch;dur={(time.monotonic() - started) * 1000:.1f}",
         })
 
+    async def tui_shell(request: Request) -> Response:
+        if not authed(request):
+            return RedirectResponse("/login?" + urlencode({"next": tui_webapp.TUI}),
+                                    status_code=303, headers=_NO_STORE)
+        return tui_webapp.response(request.headers.get("accept-encoding", ""),
+                                   request.headers.get("if-none-match", ""))
+
+    async def tui_asset(request: Request) -> Response:
+        if not authed(request):
+            return RedirectResponse("/login?" + urlencode({"next": tui_webapp.TUI}),
+                                    status_code=303, headers=_NO_STORE)
+        return tui_webapp.asset(request.path_params["asset"],
+                                request.headers.get("accept-encoding", ""),
+                                request.headers.get("if-none-match", ""))
+
+    async def tui_socket(websocket: WebSocket) -> None:
+        """One fixed command in a real PTY. Nothing here is client-chosen."""
+        if not authed(websocket):
+            await websocket.close(code=4401)
+            return
+        argv = terminal.command()
+        await websocket.accept()
+        if argv is None or os.name != "posix":
+            reason = ("The hermes launcher is not on this host's PATH." if argv is None
+                      else "This host has no POSIX pseudo-terminal.")
+            await websocket.send_text(f"\r\n\x1b[31m{reason}\x1b[0m\r\n")
+            await websocket.close(code=1011)
+            return
+        env = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+        try:
+            session = terminal.Terminal(argv, cwd=os.path.expanduser("~"), env=env)
+        except OSError as exc:
+            _log.warning("tui: could not start the terminal: %s", exc)
+            await websocket.send_text("\r\n\x1b[31mCould not start the terminal.\x1b[0m\r\n")
+            await websocket.close(code=1011)
+            return
+
+        async def pump_out() -> None:
+            while True:
+                chunk = await session.reader.get()
+                if chunk is None:
+                    return
+                await websocket.send_bytes(chunk)
+
+        async def pump_in() -> None:
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                raw = message.get("bytes")
+                if raw:
+                    session.write(raw)
+                    continue
+                text = message.get("text") or ""
+                if text.startswith("{"):
+                    try:
+                        command = json.loads(text)
+                    except ValueError:
+                        command = None
+                    if isinstance(command, dict) and command.get("type") == "resize":
+                        try:
+                            session.resize(int(command.get("cols", 80)), int(command.get("rows", 24)))
+                        except (TypeError, ValueError):
+                            pass
+                        continue
+                session.write(text.encode())
+
+        async def watch_session() -> None:
+            while True:
+                await asyncio.sleep(_SESSION_CHECK_INTERVAL)
+                if not authed(websocket):
+                    await websocket.close(code=4401)
+                    return
+
+        tasks = [asyncio.create_task(pump_out()), asyncio.create_task(pump_in()),
+                 asyncio.create_task(watch_session())]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            session.close()
+            try:
+                await websocket.close()
+            except (RuntimeError, WebSocketDisconnect):
+                pass
+
     async def proxy_http(request: Request) -> Response:
         if not authed(request):
             if request.url.path == "/favicon.ico":
@@ -300,15 +412,18 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 dest += "?" + request.url.query
             return RedirectResponse("/login?" + urlencode({"next": dest}), status_code=303)
         query = request.url.query
-        if handoff and request.method == "GET" and request.url.path == "/":
+        if request.method == "GET" and request.url.path == "/":
             session = request.cookies.get(sessions.COOKIE) or ""
             view = request.query_params.get(fast_webapp.VIEW_QUERY)
-            consumed = handoff.consume(request.query_params.get(ENTRY_QUERY), session)
+            consumed = handoff.consume(request.query_params.get(ENTRY_QUERY), session) if handoff else False
+            mode = fast_webapp.read_mode(data_dir)
+            if view == "tui" or (not consumed and view != "hermes" and mode == "tui"):
+                return RedirectResponse(tui_webapp.TUI, status_code=303, headers=_NO_STORE)
             if consumed and view == "fast":
                 return fast_webapp.response(request.headers.get("accept-encoding", ""))
-            if view == "fast" or (not consumed and view != "hermes" and fast_webapp.read_mode(data_dir) == "fast"):
+            if view == "fast" or (not consumed and view != "hermes" and mode == "fast"):
                 return RedirectResponse(_fast_path(request.query_params), status_code=303, headers=_NO_STORE)
-            if not consumed:
+            if handoff and not consumed:
                 launch_started = time.monotonic()
                 try:
                     target = await handoff.launch(session, query)
@@ -438,12 +553,18 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
 
     return Starlette(
         routes=[
+            # Fixed, content-addressed public artwork only: no asset directory.
+            Route(login_page.background_url(), login_background, methods=["GET"]),
             Route("/login", login_get, methods=["GET"]),
             Route("/login", login_post, methods=["POST"]),
             Route("/logout", logout, methods=["GET", "POST"]),
+            # The terminal needs no upstream: it runs where the gate runs.
+            Route(tui_webapp.TUI, tui_shell, methods=["GET"]),
+            Route(tui_webapp.TUI + "/{asset}", tui_asset, methods=["GET"]),
             *([Route(fast_webapp.FAST, fast_shell, methods=["GET"]),
                Route(fast_webapp.MARKDOWN, fast_shell, methods=["GET"]),
                Route(fast_webapp.FAST + "/connect", fast_connect, methods=["GET"])] if handoff else []),
+            WebSocketRoute(tui_webapp.SOCKET, tui_socket),
             WebSocketRoute("/{path:path}", proxy_ws),
             Route("/{path:path}", proxy_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),
         ],

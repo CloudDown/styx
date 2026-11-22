@@ -35,12 +35,14 @@ Tor Browser → http://<v3>.onion
 | `backend/gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
 | `backend/webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
 | `backend/fast_webapp.py`, `assets/fast/` | opt-in chat client using the same native browser grant and documented gateway RPC |
+| `backend/tui_webapp.py`, `assets/tui/` | opt-in terminal page; vendored xterm.js, no external assets |
+| `backend/terminal.py` | POSIX PTY running the fixed `hermes --tui`; never a client-chosen command |
 | `backend/headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
 | `backend/asset_transfer.py` | negotiated streaming gzip for public immutable hashed JS/CSS only; no shared cache |
 | `backend/network.py` | shared loopback validation and port readiness helpers |
 | `backend/storage.py` | atomic 0600 writes for passwords, state and process identities |
 | `backend/platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
-| `backend/login_page.py` | minimal glass password field + local painting embedded as data URI, **no external assets** |
+| `backend/login_page.py` | minimal glass password field + same-origin immutable painting, **no external assets** |
 | `backend/passwords.py` | scrypt; empty refused; **no min length** |
 | `backend/sessions.py` | HMAC cookie `styx_session`, 12h; key derived from current password hash |
 | `backend/tor_supervisor.py` | dedicated tor, `SocksPort 0`, HS v3 → gate |
@@ -60,6 +62,7 @@ hermes styx start          # enables webapp, (re)starts gateway if needed, then 
 hermes styx url            # secret
 hermes styx stop           # tor+gate only
 hermes styx doctor
+hermes styx webapp tui     # terminal-only interface: the TUI in a PTY (POSIX)
 hermes plugins validate ~/projet/styx
 hermes plugins doctor ~/projet/styx --ci
 hermes --run-module unittest discover -s ~/projet/styx/tests -v
@@ -73,7 +76,7 @@ No pytest in the Hermes venv — use stdlib `unittest`.
 
 - Public plugin API only (`hermes_cli.config`, `plugins.plugin_storage`, …). `hermes plugins validate` must stay green.
 - Do not monkeypatch Hermes core.
-- Login page: zero network. Local painting in `assets/login-background.jpg`, minimal glass password field.
+- Login page: no external network. Local painting in `assets/login-background.jpg` served at a content-addressed same-origin URL; only that public artwork is immutable, never the form/CSRF. Minimal glass password field.
 - Private webapp tabs need Hermes' native sessionStorage grant. After valid
   Cerberus auth, use public `hermes webapp --no-open --skip-build` and the
   official /webapp/launch → /webapp/window-session flow. Never read native

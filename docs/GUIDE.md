@@ -52,6 +52,20 @@ Fast sert un document HTML léger, sans framework ni police externe. Il affiche 
 
 La page Cerberus ne change pas. Fast ne réutilise que l'autorisation native encore valide de l'onglet ; sinon il passe par le lancement officiel et l'échange à usage unique. Une installation qui exige une connexion Hermes supplémentaire ouvre l'interface officielle. Fast nécessite un Hermes dont le WebSocket prend en charge `hermes-gateway-v1` et les sessions GUI. Le service Hermes, ses données et ses fichiers ne sont pas modifiés.
 
+### Terminal Hermes (TUI, optionnel)
+
+```bash
+hermes styx webapp tui      # terminal Hermes par défaut
+hermes styx webapp fast     # revenir au client léger
+hermes styx webapp hermes   # revenir à la webapp officielle
+```
+
+Le mode `tui` sert une page terminal derrière Cerberus. Son WebSocket ouvre un pseudo-terminal sur l'hôte et y lance la commande fixe `hermes --tui` : aucune commande, aucun argument et aucun dossier de travail ne viennent du navigateur. Styx n'expose donc pas un shell, seulement le TUI d'Hermes. Le terminal est rendu localement par xterm.js embarqué (MIT, `assets/tui/vendor/`), sans ressource externe.
+
+Dans l'invite de chat standard, le navigateur préaffiche la frappe simple en fin de ligne sans attendre Tor. Hermes garde la main sur le texte réel, les raccourcis, le collage et l'envoi.
+
+Le mode est disponible sous Linux et macOS. Windows natif n'a pas de pseudo-terminal POSIX : la page l'indique au lieu de lancer quoi que ce soit. Une session de terminal a les mêmes accès que l'utilisateur système d'Hermes.
+
 ### Priorité d'affichage
 
 L'ordre visé est : structure et styles essentiels, connexion sécurisée et liste des sessions, conversation active et champ de message, puis historique ancien et outils avancés à la demande. C'est une priorité de parcours, pas une statistique d'usage ni une réécriture du Desktop.

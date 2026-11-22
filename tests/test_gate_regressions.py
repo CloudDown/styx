@@ -8,7 +8,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from starlette.requests import ClientDisconnect
@@ -111,9 +111,83 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(encoded.headers["content-encoding"], "gzip")
         self.assertEqual(encoded.headers["cache-control"], "no-store")
         self.assertLess(int(encoded.headers["content-length"]), len(identity.content) * 0.85)
-        # The usable form arrives before the large inline painting.
+        # The complete usable form no longer transfers the painting on each GET.
         self.assertLess(encoded.text.index('name="password"'), 5000)
-        self.assertLess(encoded.text.index("</form>"), encoded.text.index("data:image/jpeg;base64,"))
+        self.assertNotIn("base64,", encoded.text)
+        self.assertLess(len(identity.content), 6000)
+
+    async def test_only_the_public_painting_is_immutable_and_requires_no_session(self):
+        url = gate.login_page.background_url()
+        response = await self.browser.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, gate.login_page.background_bytes())
+        self.assertEqual(response.headers["content-type"], "image/jpeg")
+        self.assertIn("immutable", response.headers["cache-control"])
+        self.assertNotIn("set-cookie", response.headers)
+        self.assertNotIn("content-encoding", response.headers)
+        etag = response.headers["etag"]
+        for tag in (etag, "W/" + etag, '"other", ' + etag, "*"):
+            cached = await self.browser.get(url, headers={"if-none-match": tag})
+            self.assertEqual(cached.status_code, 304)
+            self.assertEqual(cached.content, b"")
+            self.assertNotIn("set-cookie", cached.headers)
+        head = await self.browser.head(url)
+        self.assertEqual(head.status_code, 200)
+        self.assertEqual(head.content, b"")
+        self.assertEqual(int(head.headers["content-length"]), len(response.content))
+        # No directory, arbitrary image or upstream asset becomes public.
+        for path in ("/_styx/login-background-wrong.jpg", "/assets/login-background.jpg",
+                     "/_styx/../passwd"):
+            self.assertEqual((await self.browser.get(path)).status_code, 303)
+        login = await self.browser.get("/login")
+        self.assertEqual(login.headers["cache-control"], "no-store")
+
+    async def test_valid_login_does_not_wait_for_the_failure_backoff(self):
+        with patch.object(gate, "_LOGIN_DELAY", 0.4), \
+                patch.object(gate.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+            response = await self.login()
+        self.assertEqual(response.status_code, 303)
+        sleep.assert_not_awaited()
+
+    async def test_invalid_logins_keep_the_full_progressive_backoff(self):
+        with patch.object(gate, "_LOGIN_DELAY", 0.4), \
+                patch.object(gate.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+            self.assertEqual((await self.login("wrong")).status_code, 401)
+            self.assertEqual((await self.login("wrong")).status_code, 401)
+            # A legitimate login after failures still has no artificial wait.
+            self.assertEqual((await self.login()).status_code, 303)
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [0.4, 0.8])
+
+    async def test_failed_attempts_stay_pending_during_backoff(self):
+        await self.browser.get("/login")
+        csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+        all_waiting, release = asyncio.Event(), asyncio.Event()
+        waiting = 0
+
+        async def backoff(delay):
+            nonlocal waiting
+            waiting += 1
+            if waiting == gate._FAIL_MAX:
+                all_waiting.set()
+            await release.wait()
+
+        with patch.object(passwords, "verify_password", return_value=False), \
+                patch.object(gate.asyncio, "sleep", side_effect=backoff):
+            requests = [
+                asyncio.create_task(self.browser.post(
+                    "/login", data={"csrf": csrf, "password": "wrong"},
+                )) for _ in range(gate._FAIL_MAX)
+            ]
+            try:
+                await asyncio.wait_for(all_waiting.wait(), timeout=3)
+                blocked = await self.browser.post(
+                    "/login", data={"csrf": csrf, "password": "old-password"},
+                )
+                self.assertEqual(blocked.status_code, 429)
+            finally:
+                release.set()
+                responses = await asyncio.gather(*requests)
+            self.assertTrue(all(response.status_code == 401 for response in responses))
 
     async def test_public_scripts_are_streamed_compressed_without_changing_cache_policy(self):
         await self.login()

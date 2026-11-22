@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -26,9 +26,14 @@ class LoginAndSessions(unittest.TestCase):
         self.assertIn("backdrop-filter: blur(", html)
         self.assertNotIn("<footer", lowered)
         self.assertNotIn("<h1", lowered)
-        encoded = html.split("data:image/jpeg;base64,", 1)[1].split('"', 1)[0]
         image = Path(__file__).resolve().parents[1] / "assets/login-background.jpg"
-        self.assertEqual(base64.b64decode(encoded), image.read_bytes())
+        self.assertEqual(login_page.background_bytes(), image.read_bytes())
+        digest = hashlib.sha256(image.read_bytes()).hexdigest()
+        self.assertIn(f"/_styx/login-background-{digest}.jpg", html)
+        self.assertIn('rel="preload" as="image"', html)
+        self.assertIn("autofocus", html)
+        self.assertNotIn("base64,", html)
+        self.assertLess(len(html.encode()), 6000)
 
     def test_login_errors_and_csrf_are_escaped(self):
         html = login_page.render(error="<script>bad</script>", csrf='"><bad>')

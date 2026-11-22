@@ -27,7 +27,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     ca.add_argument("--name", default="device", help="Label for this client (default: device)")
     subs.add_parser("doctor", help="Check tor, passphrase, webapp, processes")
     webapp = subs.add_parser("webapp", help="Choose the default browser interface")
-    webapp.add_argument("mode", nargs="?", choices=("hermes", "fast", "status"), default="status")
+    webapp.add_argument("mode", nargs="?", choices=("hermes", "fast", "tui", "status"), default="status")
     subparser.set_defaults(func=styx_command)
 
 

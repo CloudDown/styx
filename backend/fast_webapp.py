@@ -17,7 +17,7 @@ from .storage import write_private
 FAST = "/_styx/fast"
 VIEW_QUERY = "_styx_view"
 DEFAULT_MODE = "hermes"
-MODES = (DEFAULT_MODE, "fast")
+MODES = (DEFAULT_MODE, "fast", "tui")
 _FILES = PLUGIN_ROOT / "assets" / "fast"
 MARKDOWN = FAST + "/marked-18.1.0.js"
 

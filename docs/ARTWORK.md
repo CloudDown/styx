@@ -12,7 +12,8 @@ Palazzo Medici-Riccardi, Florence.
 
 ## Files
 
-- `assets/login-background.jpg`: the local painting embedded in the login page.
+- `assets/login-background.jpg`: the local painting served from a content-addressed,
+  same-origin URL, cached independently of the private login form.
 - `docs/login.png`: the existing 1440 × 900 login-page screenshot used in the README
   and catalog gallery. It contains no browser chrome, address, entered password or session data.
 - `docs/catalog-banner.jpg`: a 1200 × 600 crop of that same screenshot for the

@@ -36,4 +36,5 @@ class CliCommands(unittest.TestCase):
     def test_webapp_mode_selection(self):
         self.assertEqual(self.parser.parse_args(["webapp"]).mode, "status")
         self.assertEqual(self.parser.parse_args(["webapp", "fast"]).mode, "fast")
+        self.assertEqual(self.parser.parse_args(["webapp", "tui"]).mode, "tui")
         self.assertEqual(self.parser.parse_args(["webapp", "hermes"]).mode, "hermes")

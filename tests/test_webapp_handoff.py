@@ -17,7 +17,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import fast_webapp, gate, passwords, sessions, webapp_handoff as handoff  # noqa: E402
+from styx.backend import fast_webapp, gate, passwords, sessions, webapp_handoff as handoff, tui_webapp  # noqa: E402
 from test_gate_regressions import Chunks, Transport  # noqa: E402
 
 TICKET = "t" * 43
@@ -238,6 +238,33 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.browser.get("/?" + fragment["query"][0])).status_code, 303)
         self.assertEqual((await self.browser.get(fast_webapp.FAST + "?profile=main")).status_code, 200)
         self.assertEqual(self.issue.call_count, 1)
+
+    async def test_tui_mode_serves_a_terminal_and_keeps_the_official_webapp_reachable(self):
+        await self.login()
+        fast_webapp.write_mode(self.root, "tui")
+        self.assertEqual((await self.browser.get("/")).headers["location"], tui_webapp.TUI)
+        shell = await self.browser.get(tui_webapp.TUI, headers={"Accept-Encoding": "gzip"})
+        self.assertEqual(shell.status_code, 200)
+        self.assertIn("Hermes · Terminal", shell.text)
+        self.assertIn("frame-ancestors 'none'", shell.headers["content-security-policy"])
+        self.assertEqual(shell.headers["cache-control"], "private, no-cache")
+        self.assertEqual(shell.headers["referrer-policy"], "no-referrer")
+        self.assertIn(tui_webapp.TUI + "/xterm.js", shell.text)
+        for name in ("xterm.js", "addon-fit.js", "xterm.css"):
+            asset = await self.browser.get(f"{tui_webapp.TUI}/{name}", headers={"Accept-Encoding": "gzip"})
+            self.assertEqual(asset.status_code, 200, name)
+            self.assertIn("immutable", asset.headers["cache-control"])
+        # The terminal runs on this host: serving it never reaches upstream.
+        self.assertFalse(self.upstream_calls)
+        # An explicit official view still opens the real Webapp.
+        token, _ = await self.complete(await self.browser.get("/?_styx_view=hermes"))
+        self.assertEqual(token, self.native_token)
+        fast_webapp.write_mode(self.root, "hermes")
+
+    async def test_tui_shell_and_terminal_assets_need_the_login(self):
+        fast_webapp.write_mode(self.root, "tui")
+        for path in (tui_webapp.TUI, tui_webapp.TUI + "/xterm.js", "/?_styx_view=tui"):
+            self.assertEqual((await self.browser.get(path)).status_code, 303, path)
 
     async def test_fast_default_can_open_unmodified_official_webapp(self):
         await self.login()

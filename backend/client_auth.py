@@ -38,11 +38,6 @@ def client_line(onion: str, private_b32: str) -> str:
     return f"{host}:descriptor:x25519:{private_b32}"
 
 
-def list_clients(data_dir: Path) -> list[str]:
-    auth_dir = paths.authorized_clients_dir(data_dir)
-    return sorted(p.stem for p in auth_dir.glob("*.auth"))
-
-
 def _safe(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", name.strip()) or "client"
     return cleaned[:64]

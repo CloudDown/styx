@@ -81,10 +81,6 @@ class Terminal:
             os.close(master)
             raise
 
-    @property
-    def pid(self) -> int:
-        return self._proc.pid
-
     @staticmethod
     def _resize_fd(fd: int, cols: int, rows: int) -> None:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))

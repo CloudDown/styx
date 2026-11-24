@@ -256,9 +256,6 @@ function repaintTheme() {
   size();
 }
 systemDark.addEventListener('change', repaintTheme);
-try {
-  new BroadcastChannel('styx-appearance').onmessage = repaintTheme;
-} catch {}
 
 window.addEventListener('pagehide', () => {
   clearPreview();

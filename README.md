@@ -46,24 +46,50 @@ hermes styx stop
 
 Only Tor and Cerberus stop. Hermes and its bots keep running.
 
-## Everyday use
+## Commands
 
-| Action | Command |
+Every host command is under `hermes styx`; running it without a subcommand prints the list.
+
+### Start and stop
+
+| Command | What it does |
 |---|---|
-| Start again after stopping | `hermes styx start` |
-| Check status on the host | `hermes styx status` |
-| Diagnose a problem | `hermes styx doctor` |
-| Change your password | `hermes styx passwd` |
-| Install missing prerequisites and start | `hermes styx setup` |
-| Use the terminal interface (Hermes TUI) | `hermes styx webapp tui` |
-| Return to the full official interface | `hermes styx webapp hermes` |
-| Check from chat without revealing the address | `/styx` |
+| `hermes styx setup [--client-auth] [--no-wait]` | First run: offers Tor installation in an interactive host terminal, sets a missing passphrase, prepares the Webapp and starts Styx. |
+| `hermes styx start [--client-auth] [--no-wait]` | Later runs: prepares the Webapp, checks the served HTTP response, enables it, then starts the gate and Tor. It restarts the Hermes gateway only when its interface is unavailable. |
+| `hermes styx stop` | Stops Tor and the gate only; Hermes and its bots keep running. |
+| `hermes styx status` | Host summary: processes, target, upstream health, onion, password and client-auth state. |
 
-The dashboard's **Styx** tab also lets you start, stop and copy the address. The Desktop status chip is opt-in, under **Capabilities → Plugins**.
+`--client-auth` requires a Tor client key minted with `hermes styx client-auth`; keep the flag on later starts so the recorded state stays accurate. `--no-wait` returns before the `.onion` hostname is published; run `hermes styx url` once it is.
 
-The official Webapp is the default; `hermes styx webapp status` shows the saved choice.
+### Address, password and diagnostics
 
-To require a per-device Tor key in addition to the password, see the [guide (French)](docs/GUIDE.md#clé-tor-par-appareil).
+| Command | What it does |
+|---|---|
+| `hermes styx url` | Prints the onion address. Treat it as a secret and use it from a host terminal, not from chat. |
+| `hermes styx passwd` | Prompts twice for a new passphrase. Existing HTTP sessions are revoked and open WebSockets close within one second. There is no minimum length; use a long, unique passphrase. |
+| `hermes styx client-auth [--name NAME]` | Creates a Tor v3 client key, writes the server-side authorization and prints the private line to add in Tor Browser. Then restart with `hermes styx stop && hermes styx start --client-auth`. `--name` labels the device (default: `device`). |
+| `hermes styx doctor` | Checks Tor, passphrase, upstream, browser handoff, gate, Tor and onion; exits non-zero with a hint when a check fails. |
+
+### Browser interface
+
+| Command | What it does |
+|---|---|
+| `hermes styx webapp hermes` | Full official Hermes Webapp (default). |
+| `hermes styx webapp tui` | Terminal interface: Hermes TUI in a pseudo-terminal, rendered by bundled xterm.js. Linux and macOS only. |
+| `hermes styx webapp status` | Prints the saved preference. |
+
+The preference is profile-scoped and read by the gate on each request, so it applies from the next visit (the running gate must already include this feature). Add `?_styx_view=hermes` or `?_styx_view=tui` to the main address to override it for one visit. From chat, `/styx` reports up/down only and never prints the address.
+
+The dashboard's **Styx** tab can start, stop and copy the address; the Desktop status chip is opt-in under **Capabilities → Plugins**.
+
+### Plugin lifecycle
+
+| Command | What it does |
+|---|---|
+| `hermes plugins install CloudDown/styx` | Install the plugin from the catalog or the Git repository. |
+| `hermes plugins enable styx` or `hermes plugins disable styx` | Enable or disable it after installation. |
+| `hermes plugins update styx` | Fetch the latest reviewed release. |
+| `hermes plugins list` | Show installed plugins and their state. |
 
 ## Access and privacy
 

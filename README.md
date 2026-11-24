@@ -55,14 +55,13 @@ Only Tor and Cerberus stop. Hermes and its bots keep running.
 | Diagnose a problem | `hermes styx doctor` |
 | Change your password | `hermes styx passwd` |
 | Install missing prerequisites and start | `hermes styx setup` |
-| Use the reduced chat interface (builds it on first use) | `hermes styx webapp fast` |
 | Use the terminal interface (Hermes TUI) | `hermes styx webapp tui` |
 | Return to the full official interface | `hermes styx webapp hermes` |
 | Check from chat without revealing the address | `/styx` |
 
 The dashboard's **Styx** tab also lets you start, stop and copy the address. The Desktop status chip is opt-in, under **Capabilities → Plugins**.
 
-**Hermes Fast** uses the official React chat, with streaming Markdown replies, paginated sessions and history, model and reasoning selection, attachments, dictation and voice conversation. Use the session’s action menu to rename or delete it. Fast keeps the native Hermes browser authorization. **Settings** has links to the full Webapp and TUI. The official Webapp remains the default; `hermes styx webapp status` shows the saved choice.
+The official Webapp is the default; `hermes styx webapp status` shows the saved choice.
 
 To require a per-device Tor key in addition to the password, see the [guide (French)](docs/GUIDE.md#clé-tor-par-appareil).
 
@@ -81,7 +80,6 @@ Changing the password revokes existing sessions: the next HTTP request requires 
 - **Host commands and configuration:** Styx uses public Hermes config/storage APIs and CLI commands. Starting the default webapp target enables `webapp.enabled`, prepares the interface with `hermes webapp --build-only`, and may start or restart the gateway if its HTTP interface is unavailable. After a valid Cerberus login, it obtains a one-use native browser launch through `hermes webapp --no-open --skip-build`; additional Hermes sign-in providers remain enforced. A gateway restart can interrupt active work.
 - **Optional system installation:** in an interactive host terminal only, setup can offer to install Tor through the existing system package manager. It shows the command and requires explicit confirmation; sudo/doas, administrator and license prompts remain with the package manager. Package downloads use that manager's configured repositories and verification. Styx does not bundle a Tor binary, bootstrap a package manager or download an installer script.
 - **Local files and secrets:** durable state lives under the active profile's `$HERMES_HOME/plugin-data/styx/`: a salted scrypt password hash, session-signing key, Tor onion identity, optional client authorizations, PID/state files and logs. These are protected by POSIX permissions or Windows ACLs; backups must be protected too. Styx reads its own process information and standard OS/package-manager locations outside that directory to identify processes and find Tor. It does not read Hermes authentication files, `.env` files, browser profiles or other applications' credential stores.
-- **Optional Fast interface:** a separate, reduced build of the official Hermes Webapp renderer, behind Cerberus and Hermes' native tab authorization. `hermes styx webapp fast` builds it on first use and selects it. The official Webapp remains available untouched. See the [feature scope](docs/FAST.md) and [build prerequisites](frontend/webapp-fast/README.md).
 - **Optional terminal interface:** `hermes styx webapp tui` serves a terminal page behind Cerberus whose WebSocket starts a pseudo-terminal on this host running the fixed command `hermes --tui`. No command, argument or working directory is accepted from the browser, and the terminal is rendered locally by a bundled [xterm.js](https://github.com/xtermjs/xterm.js) (MIT, `assets/tui/vendor/`); nothing loads from a CDN. It is available on Linux and macOS; native Windows has no POSIX pseudo-terminal, so the page says so instead of starting anything. A terminal session has the same OS-user access as the Hermes UI itself.
 - **Updates:** Styx has no self-updater. Use `hermes plugins update styx`; catalog installations follow the reviewed commit pin.
 

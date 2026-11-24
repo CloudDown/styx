@@ -22,15 +22,8 @@ const screen = document.getElementById('screen');
 const status = document.getElementById('status');
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 
-function darkNow() {
-  let choice = '';
-  try { choice = localStorage.getItem('styx-fast-appearance') || ''; } catch {}
-  if (choice === 'light' || choice === 'dark') return choice === 'dark';
-  return systemDark.matches;
-}
-
 const term = new Terminal({
-  theme: darkNow() ? DARK : LIGHT,
+  theme: systemDark.matches ? DARK : LIGHT,
   fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace',
   fontSize: innerWidth < 600 ? 12 : 13,
   lineHeight: 1.2,
@@ -255,10 +248,10 @@ window.visualViewport?.addEventListener('resize', size);
 window.addEventListener('orientationchange', () => setTimeout(size, 120));
 
 function repaintTheme() {
-  term.options.theme = darkNow() ? DARK : LIGHT;
+  term.options.theme = systemDark.matches ? DARK : LIGHT;
   clearPreview();
   for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
-    meta.content = darkNow() ? '#0d1015' : '#fefefe';
+    meta.content = systemDark.matches ? '#0d1015' : '#fefefe';
   }
   size();
 }

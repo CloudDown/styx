@@ -3,15 +3,18 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend.asset_transfer import accepts_gzip, compressible_asset, gzip_headers  # noqa: E402
+from styx.backend import asset_transfer as transfer  # noqa: E402
+from styx.backend.asset_transfer import accepts_gzip, asset_encoding, encoding_headers  # noqa: E402
+from test_gate_regressions import Chunks  # noqa: E402
 
 
-class AssetTransfer(unittest.TestCase):
+class AssetTransfer(unittest.IsolatedAsyncioTestCase):
     def test_encoding_negotiation_respects_opt_out_and_wildcards(self):
         for value in ("gzip", "br, gzip", "*;q=0.5", "GZip; Q=1", "gzip;q=0.1"):
             with self.subTest(value=value):
@@ -21,7 +24,7 @@ class AssetTransfer(unittest.TestCase):
                 self.assertFalse(accepts_gzip(value))
 
     def eligible(self, *, path="/assets/main-123abcXY.js", method="GET", status=200,
-                 request_headers=None, response_headers=None):
+                 request_headers=None, response_headers=None, prefer_zstd=False):
         req = httpx.Request(method, "http://test.local" + path, headers={
             "accept-encoding": "gzip", **(request_headers or {}),
         })
@@ -31,7 +34,30 @@ class AssetTransfer(unittest.TestCase):
             "cache-control": "public, max-age=31536000, immutable",
             **(response_headers or {}),
         })
-        return compressible_asset(req, upstream)
+        return asset_encoding(req, upstream, prefer_zstd=prefer_zstd)
+
+    def test_zstd_selected_only_when_supported_and_explicitly_preferred(self):
+        with patch.object(transfer, "zstd", object()):
+            for value, expected in (
+                ("zstd, gzip", "zstd"),
+                ("zstd;q=0.7, gzip", "gzip"),
+                ("zstd;q=0, gzip;q=0", None),
+                ("*", "gzip"),
+            ):
+                self.assertEqual(self.eligible(request_headers={"accept-encoding": value}, prefer_zstd=True), expected)
+            self.assertEqual(self.eligible(request_headers={"accept-encoding": "zstd, gzip"}), "gzip")
+            self.assertIsNone(self.eligible(path="/api/profiles", request_headers={"accept-encoding": "zstd"},
+                                            prefer_zstd=True))
+        with patch.object(transfer, "zstd", None):
+            self.assertEqual(self.eligible(request_headers={"accept-encoding": "zstd, gzip"}, prefer_zstd=True), "gzip")
+
+    @unittest.skipIf(transfer.zstd is None, "stdlib zstd requires Python 3.14")
+    async def test_zstd_stream_round_trip(self):
+        chunk = b"const data = ['official renderer'];\n" * 2000
+        upstream = httpx.Response(200, stream=Chunks(chunk, chunk))
+        encoded = b"".join([part async for part in transfer.compressed_stream(upstream, "zstd")])
+        self.assertEqual(transfer.zstd.decompress(encoded), chunk * 2)
+        self.assertLess(len(encoded), len(chunk))
 
     def test_only_explicitly_public_immutable_hashed_scripts_and_styles(self):
         self.assertTrue(self.eligible())
@@ -61,11 +87,11 @@ class AssetTransfer(unittest.TestCase):
                 self.assertFalse(self.eligible(**options))
 
     def test_transformed_headers_do_not_claim_original_byte_length_or_digest(self):
-        result = gzip_headers([
+        result = encoding_headers([
             (b"etag", b'"original"'), (b"content-length", b"1234"),
             (b"accept-ranges", b"bytes"), (b"content-digest", b"old"),
             (b"cache-control", b"public, immutable"), (b"vary", b"Origin"),
-        ])
+        ], "gzip")
         self.assertIn((b"etag", b'W/"original"'), result)
         self.assertIn((b"content-encoding", b"gzip"), result)
         self.assertIn((b"vary", b"Origin"), result)

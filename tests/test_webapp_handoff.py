@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import gzip
-import hashlib
+import json
 import secrets
 import subprocess
 import sys
@@ -18,8 +16,9 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import fast_webapp, gate, passwords, sessions, webapp_handoff as handoff, tui_webapp  # noqa: E402
+from styx.backend import gate, passwords, sessions, webapp_mode, webapp_handoff as handoff, tui_webapp  # noqa: E402
 from test_gate_regressions import Chunks, Transport  # noqa: E402
+from test_webapp_preload import LINKS, MANIFEST  # noqa: E402
 
 TICKET = "t" * 43
 
@@ -137,7 +136,10 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.upstream_calls.append(request)
         headers = {"content-type": "text/html"}
         status = 200
-        if request.url.path == "/webapp/launch":
+        if request.url.path == "/renderer-manifest.json":
+            headers = {"content-type": "application/json"}
+            body = json.dumps(MANIFEST).encode()
+        elif request.url.path == "/webapp/launch":
             body = b"native launch page"
         elif request.url.path == "/webapp/window-session":
             ticket = request.headers.get("X-Hermes-Window-Ticket")
@@ -186,132 +188,32 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_cli_launch_or_native_exchange_before_cerberus_authentication(self):
         self.assertEqual((await self.browser.get("/")).status_code, 303)
+        self.assertEqual((await self.browser.get("/webapp/launch")).status_code, 303)
         self.assertEqual((await self.browser.post("/webapp/window-session")).status_code, 303)
         self.issue.assert_not_called()
         self.assertFalse(self.upstream_calls)
 
-    async def test_fast_shell_and_connect_are_unavailable_before_cerberus(self):
-        fast_webapp.write_mode(self.root, "fast")
-        for path in (fast_webapp.FAST, fast_webapp.APP, fast_webapp.FAST + "/connect", "/?_styx_view=fast"):
-            self.assertEqual((await self.browser.get(path)).status_code, 303)
-        self.assertEqual((await self.browser.get(fast_webapp.FAST + "/build/" + "a" * 24 +
-                                                "/assets/chat-C7export.js")).status_code, 401)
-        self.issue.assert_not_called()
-        self.assertFalse(self.upstream_calls)
-
-    def fast_build_fixture(self):
-        generation = "a" * 24
-        directory = self.root / "fast-builds" / generation
-        (directory / "assets").mkdir(parents=True)
-        path = f"{fast_webapp.FAST}/build/{generation}/assets/chat-C7export.js"
-        boot = "window.__HERMES_UI_SURFACE__='webapp';"
-        (directory / "index.html").write_text(
-            f'<title>Hermes Fast</title><script>{boot}</script><script src="{path}" type="module"></script>',
-            encoding="utf-8")
-        body = b"export const renderer = 'Hermes';"
-        (directory / "assets" / "chat-C7export.js").write_bytes(body)
-        (directory / "assets" / "chat-C7export.js.gz").write_bytes(gzip.compress(body))
-        (self.root / "fast-build").write_text(generation, encoding="ascii")
-        return path, body, boot
-
-    async def test_fast_has_its_own_build_and_reuses_native_grant_on_reload(self):
-        path, body, boot = self.fast_build_fixture()
-        fast_webapp.write_mode(self.root, "fast")
-        scope = "?profile=main&session=example"
-        response = await self.login(next_path="/" + scope)
-        self.assertEqual(response.headers["location"], fast_webapp.FAST + scope)
-        launcher = await self.browser.get(response.headers["location"])
-        self.assertIn("sessionStorage.getItem", launcher.text)
-        self.assertEqual(launcher.headers["cache-control"], "no-store")
-        self.assertEqual((await self.browser.head(fast_webapp.FAST + "/connect")).status_code, 405)
-        self.issue.assert_not_called()
-        no_native = await self.browser.get("/api/profiles")
-        self.assertEqual(no_native.status_code, 401)
-
-        launch = await self.browser.get(fast_webapp.FAST + "/connect" + scope)
-        link = urlsplit(launch.headers["location"])
-        self.assertEqual(link.path, "/webapp/launch")
-        fragment = parse_qs(link.fragment)
-        self.assertEqual((await self.browser.get(link.path)).status_code, 200)
+    async def test_preload_hints_only_on_workspace_preserve_native_auth_and_html(self):
+        response = await self.login(next_path="/")
+        launch = urlsplit(response.headers["location"])
+        self.assertNotIn("link", response.headers)
+        native = await self.browser.get(launch.path)
+        self.assertEqual(native.content, b"native launch page")
+        self.assertNotIn("link", native.headers)
+        fragment = parse_qs(launch.fragment)
         exchange = await self.browser.post("/webapp/window-session", headers={
             "X-Hermes-Window-Ticket": fragment["ticket"][0],
         })
         self.assertEqual(exchange.status_code, 200)
-        final = await self.browser.get("/?" + fragment["query"][0])
-        self.assertEqual(final.status_code, 303)
-        self.assertEqual(final.headers["location"], fast_webapp.APP + scope)
-        self.assertEqual((await self.browser.get("/?" + fragment["query"][0])).status_code, 303)
-        for _ in range(2):
-            shell = await self.browser.get(final.headers["location"])
-            self.assertIn(path, shell.text)
-            self.assertNotIn(self.native_token, shell.text)
-            csp = shell.headers["content-security-policy"]
-            self.assertIn("frame-ancestors 'none'", csp)
-            self.assertIn("sha256-" + base64.b64encode(hashlib.sha256(boot.encode()).digest()).decode(), csp)
-            self.assertEqual(shell.headers["cache-control"], "no-store")
-        self.assertEqual(self.issue.call_count, 1)
-        asset = await self.browser.get(path, headers={"Accept-Encoding": "gzip"})
-        self.assertEqual(asset.headers["content-encoding"], "gzip")
-        self.assertEqual(asset.content, body)
-        self.assertIn("immutable", asset.headers["cache-control"])
-        self.assertEqual((await self.browser.get(path, headers={"If-None-Match": asset.headers["etag"]})).status_code,
-                         304)
-        part = await self.browser.get(path, headers={"Range": "bytes=0-5", "Accept-Encoding": "gzip"})
-        self.assertEqual(part.status_code, 206)
-        self.assertNotIn("content-encoding", part.headers)
-        self.assertEqual(part.content, body[:6])
-        self.assertEqual((await self.browser.get(path.replace("assets/chat-C7export.js", "index.html"))).status_code,
-                         404)
-        build = self.root / "fast-builds" / ("a" * 24)
-        (build / "renderer-manifest.json").write_text("{}", encoding="utf-8")
-        self.assertEqual((await self.browser.get(path.replace("assets/chat-C7export.js", "renderer-manifest.json")))
-                         .status_code, 404)
-
-    async def test_missing_fast_build_gives_a_recoverable_error(self):
-        await self.login()
-        for path in (fast_webapp.FAST, fast_webapp.APP):
-            response = await self.browser.get(path)
-            self.assertEqual(response.status_code, 503)
-            self.assertIn("hermes styx webapp fast", response.text)
-            self.assertIn("/?_styx_view=hermes", response.text)
-        self.issue.assert_not_called()
-
-    async def test_fast_publishes_complete_generations_and_keeps_the_previous_one(self):
-        path, body, _ = self.fast_build_fixture()
-        await self.login()
-
-        def compile_fixture(args, **kwargs):
-            directory = Path(args[3])
-            generation = args[4]
-            (directory / "assets").mkdir()
-            (directory / "assets" / "chat-C7export.js").write_bytes(body)
-            (directory / "index.html").write_text(
-                f'<script src="{fast_webapp.FAST}/build/{generation}/assets/chat-C7export.js"></script>',
-                encoding="utf-8",
-            )
-
-        with patch.object(fast_webapp.shutil, "which", return_value="node"), \
-                patch.object(fast_webapp.subprocess, "run", side_effect=compile_fixture) as compile:
-            fast_webapp.build(self.root, self.root)
-            published = fast_webapp.current_build(self.root)
-            self.assertIsNotNone(published)
-            self.assertNotEqual(published.name, "a" * 24)
-            self.assertEqual((await self.browser.get(path)).content, body)
-            self.assertEqual(gzip.decompress((published / "assets/chat-C7export.js.gz").read_bytes()), body)
-
-            compile.side_effect = subprocess.CalledProcessError(1, "node")
-            with self.assertRaisesRegex(OSError, "previous build"):
-                fast_webapp.build(self.root, self.root)
-            self.assertEqual(fast_webapp.current_build(self.root), published)
-
-            compile.side_effect = compile_fixture
-            fast_webapp.build(self.root, self.root)
-            self.assertTrue(published.is_dir())
-            self.assertEqual((await self.browser.get(path)).status_code, 404)
+        self.assertNotIn("link", exchange.headers)
+        workspace = await self.browser.get("/?" + fragment["query"][0])
+        self.assertEqual(workspace.content, b"<html>Hermes workspace</html>")
+        self.assertEqual(workspace.headers.get_list("link"), list(LINKS))
+        self.assertEqual(sum(r.url.path == "/renderer-manifest.json" for r in self.upstream_calls), 1)
 
     async def test_tui_mode_serves_a_terminal_and_keeps_the_official_webapp_reachable(self):
         await self.login()
-        fast_webapp.write_mode(self.root, "tui")
+        webapp_mode.write_mode(self.root, "tui")
         self.assertEqual((await self.browser.get("/")).headers["location"], tui_webapp.TUI)
         shell = await self.browser.get(tui_webapp.TUI, headers={"Accept-Encoding": "gzip"})
         self.assertEqual(shell.status_code, 200)
@@ -329,37 +231,17 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         # An explicit official view still opens the real Webapp.
         token, _ = await self.complete(await self.browser.get("/?_styx_view=hermes"))
         self.assertEqual(token, self.native_token)
-        fast_webapp.write_mode(self.root, "hermes")
+        webapp_mode.write_mode(self.root, "hermes")
 
     async def test_tui_shell_and_terminal_assets_need_the_login(self):
-        fast_webapp.write_mode(self.root, "tui")
+        webapp_mode.write_mode(self.root, "tui")
         for path in (tui_webapp.TUI, tui_webapp.TUI + "/xterm.js", "/?_styx_view=tui"):
             self.assertEqual((await self.browser.get(path)).status_code, 303, path)
-
-    async def test_fast_default_can_open_unmodified_official_webapp(self):
-        await self.login()
-        fast_webapp.write_mode(self.root, "fast")
-        self.assertEqual((await self.browser.get("/")).headers["location"], fast_webapp.FAST)
-        token, _ = await self.complete(await self.browser.get("/?_styx_view=hermes&profile=main"))
-        self.assertEqual(token, self.native_token)
-        self.assertEqual(dict(self.upstream_calls[-1].url.params), {"profile": "main"})
-        fast_webapp.write_mode(self.root, "hermes")
-        self.assertEqual(urlsplit((await self.browser.get("/")).headers["location"]).path, "/webapp/launch")
-
-    async def test_fast_respects_extra_provider_and_password_rotation(self):
-        await self.login()
-        self.issue.side_effect = None
-        self.issue.return_value = None
-        response = await self.browser.get(fast_webapp.FAST + "/connect")
-        self.assertEqual(response.headers["location"], "/?_styx_view=hermes")
-        self.assertEqual((await self.browser.get(response.headers["location"])).status_code, 200)
-        passwords.write_hash(self.root / "passwd", "replacement")
-        self.assertEqual((await self.browser.get(fast_webapp.FAST)).status_code, 303)
 
     async def test_unconfigured_or_invalid_mode_opens_native_hermes(self):
         mode_file = self.root / "webapp-mode"
         self.assertFalse(mode_file.exists())
-        self.assertEqual(fast_webapp.read_mode(self.root), "hermes")
+        self.assertEqual(webapp_mode.read_mode(self.root), "hermes")
         first = await self.login(next_path="/")
         self.assertEqual(urlsplit(first.headers["location"]).path, "/webapp/launch")
         token, _ = await self.complete(first)
@@ -368,7 +250,7 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         for invalid in (b"unknown\n", b"\xff"):
             with self.subTest(mode=invalid):
                 mode_file.write_bytes(invalid)
-                self.assertEqual(fast_webapp.read_mode(self.root), "hermes")
+                self.assertEqual(webapp_mode.read_mode(self.root), "hermes")
                 reopened = await self.browser.get("/")
                 self.assertEqual(urlsplit(reopened.headers["location"]).path, "/webapp/launch")
 

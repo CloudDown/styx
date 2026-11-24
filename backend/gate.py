@@ -23,22 +23,23 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 import httpx
 import uvicorn
 from starlette.applications import Starlette
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from . import headers as hdrs
-from . import fast_webapp
+from . import webapp_mode
 from . import login_page
 from . import passwords
 from . import paths
 from . import sessions
 from . import terminal
 from . import tui_webapp
-from .asset_transfer import accepts_gzip, compressible_asset, gzip_headers, gzip_stream
+from .asset_transfer import accepts_gzip, asset_encoding, compressed_stream, encoding_headers
 from .network import require_loopback
 from .webapp_handoff import ENTRY_QUERY, HandoffError, WebappHandoff, strip_entry_query
+from .webapp_preload import WebappPreload
 
 log = logging.getLogger("styx.gate")
 
@@ -49,11 +50,6 @@ _LOGIN_TIMEOUT = 10.0
 _LOGIN_DELAY = 0.4
 _SESSION_CHECK_INTERVAL = 1.0
 _NO_STORE = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
-
-
-def _fast_path(query, path=fast_webapp.FAST) -> str:
-    scope = {key: query[key] for key in ("profile", "session") if query.get(key)}
-    return path + ("?" + urlencode(scope) if scope else "")
 
 
 class _LoginLimiter:
@@ -82,17 +78,20 @@ class _LoginLimiter:
 class _ProxyResponse(StreamingResponse):
     """Close the upstream even if sending headers fails before iteration starts."""
 
-    def __init__(self, upstream: httpx.Response, *, compress: bool = False):
+    def __init__(self, upstream: httpx.Response, *, encoding: str | None = None,
+                 gzip_level: int = 1, links: tuple[str, ...] = ()):
         self.upstream = upstream
-        super().__init__(gzip_stream(upstream) if compress else upstream.aiter_raw(),
+        super().__init__(compressed_stream(upstream, encoding, gzip_level=gzip_level)
+                         if encoding else upstream.aiter_raw(),
                          status_code=upstream.status_code)
         headers = httpx.Headers(upstream.headers.raw, encoding="latin-1")
         self.raw_headers = [
             (key.lower().encode("latin-1"), value.encode("latin-1"))
             for key, value in hdrs.inbound_response_headers(headers)
         ]
-        if compress:
-            self.raw_headers = gzip_headers(self.raw_headers)
+        if encoding:
+            self.raw_headers = encoding_headers(self.raw_headers, encoding)
+        self.raw_headers.extend((b"link", link.encode("ascii")) for link in links)
 
     async def __call__(self, scope, receive, send):
         try:
@@ -121,6 +120,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
     hash_slots = asyncio.Semaphore(2)
     render_slots = asyncio.Semaphore(2)
     handoff = WebappHandoff(upstream_host, upstream_port) if webapp_handoff else None
+    preload = WebappPreload(client, upstream_base) if handoff else None
     login_backgrounds = {
         login_page.background_url(variant): variant for variant in login_page.BACKGROUND_SIZES
     }
@@ -251,19 +251,18 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if not nxt.startswith("/") or nxt.startswith(("//", "/\\")):
             nxt = "/"
         launch_started = time.monotonic()
-        root_query = dict(parse_qsl(urlsplit(nxt).query)) if nxt.startswith("/") else {}
-        mode = fast_webapp.read_mode(data_dir)
-        if (urlsplit(nxt).path == "/" and root_query.get(fast_webapp.VIEW_QUERY) != "hermes"
-                and mode == "tui"):
+        destination = urlsplit(nxt)
+        root_query = dict(parse_qsl(destination.query))
+        mode = webapp_mode.read_mode(data_dir)
+        view = root_query.get(webapp_mode.VIEW_QUERY)
+        selected_view = view if view in webapp_mode.MODES else mode
+        if destination.path == "/" and selected_view == "tui":
             resp = RedirectResponse(tui_webapp.TUI, status_code=303)
-        elif (handoff and urlsplit(nxt).path == "/" and root_query.get(fast_webapp.VIEW_QUERY) != "hermes"
-                and mode == "fast"):
-            resp = RedirectResponse(_fast_path(root_query), status_code=303)
-        elif handoff and urlsplit(nxt).path == "/":
+        elif handoff and destination.path == "/":
             try:
                 # The password is already verified. Skip the otherwise redundant
                 # round trip through GET /, without pre-issuing/caching a ticket.
-                target = await handoff.launch(token, urlsplit(nxt).query)
+                target = await handoff.launch(token, destination.query)
                 resp = RedirectResponse(target or nxt, status_code=303)
             except HandoffError as exc:
                 resp = HTMLResponse(str(exc), status_code=503)
@@ -285,41 +284,6 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         resp = RedirectResponse("/login", status_code=303)
         resp.delete_cookie(sessions.COOKIE, path="/")
         return resp
-
-    async def fast_shell(request: Request) -> Response:
-        if not authed(request):
-            return RedirectResponse("/login?" + urlencode({"next": _fast_path(request.query_params)}),
-                                    status_code=303, headers=_NO_STORE)
-        return fast_webapp.response(data_dir, app=request.url.path == fast_webapp.APP)
-
-    async def fast_asset(request: Request) -> Response:
-        if not authed(request):
-            return Response(status_code=401, headers=_NO_STORE)
-        return fast_webapp.asset(data_dir, request.path_params["generation"], request.path_params["asset"], request)
-
-    async def fast_connect(request: Request) -> Response:
-        if not authed(request):
-            return RedirectResponse("/login", status_code=303, headers=_NO_STORE)
-        if request.method != "GET":
-            return Response(status_code=405, headers={**_NO_STORE, "Allow": "GET"})
-        # An explicit account provider continues to use the official Webapp.
-        # Fast never attempts to mint or proxy a different authorization.
-        query = {fast_webapp.VIEW_QUERY: "fast"}
-        for key in ("profile", "session"):
-            if value := request.query_params.get(key):
-                query[key] = value
-        started = time.monotonic()
-        try:
-            target = await handoff.launch(request.cookies[sessions.COOKIE], urlencode(query))
-        except HandoffError as exc:
-            return HTMLResponse(str(exc), status_code=503, headers=_NO_STORE)
-        if not authed(request):
-            return RedirectResponse("/login", status_code=303, headers=_NO_STORE)
-        if target is None:
-            query[fast_webapp.VIEW_QUERY] = "hermes"
-        return RedirectResponse(target or ("/?" + urlencode(query)), status_code=303, headers={
-            **_NO_STORE, "Server-Timing": f"styx-launch;dur={(time.monotonic() - started) * 1000:.1f}",
-        })
 
     async def tui_shell(request: Request) -> Response:
         if not authed(request):
@@ -419,19 +383,16 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             if request.url.query:
                 dest += "?" + request.url.query
             return RedirectResponse("/login?" + urlencode({"next": dest}), status_code=303)
+        if preload and request.method == "GET" and request.url.path == "/webapp/launch":
+            preload.warm()
         query = request.url.query
         if request.method == "GET" and request.url.path == "/":
             session = request.cookies.get(sessions.COOKIE) or ""
-            view = request.query_params.get(fast_webapp.VIEW_QUERY)
+            view = request.query_params.get(webapp_mode.VIEW_QUERY)
             consumed = handoff.consume(request.query_params.get(ENTRY_QUERY), session) if handoff else False
-            mode = fast_webapp.read_mode(data_dir)
+            mode = webapp_mode.read_mode(data_dir)
             if view == "tui" or (not consumed and view != "hermes" and mode == "tui"):
                 return RedirectResponse(tui_webapp.TUI, status_code=303, headers=_NO_STORE)
-            if consumed and view == "fast":
-                return RedirectResponse(_fast_path(request.query_params, fast_webapp.APP),
-                                        status_code=303, headers=_NO_STORE)
-            if view == "fast" or (not consumed and view != "hermes" and mode == "fast"):
-                return RedirectResponse(_fast_path(request.query_params), status_code=303, headers=_NO_STORE)
             if handoff and not consumed:
                 launch_started = time.monotonic()
                 try:
@@ -451,25 +412,39 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             query = strip_entry_query(query)
             if view is not None:
                 query = urlencode([(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
-                                   if k != fast_webapp.VIEW_QUERY])
+                                   if k != webapp_mode.VIEW_QUERY])
         url = upstream_base + request.url.path
         if query:
             url += "?" + query
         req_headers = hdrs.outbound_headers(
             request.headers, upstream_host=upstream_host, upstream_port=upstream_port,
         )
+        # Normal reads have no request body. Avoid starting an empty chunked
+        # upload to Hermes for every read (including aborted startup fetches).
+        bodyless = (request.method in {"GET", "HEAD"} and
+                    request.headers.get("content-length", "0") == "0" and
+                    "transfer-encoding" not in request.headers)
         try:
             upstream = await client.send(
                 httpx.Request(
-                    request.method, url, headers=req_headers, content=request.stream(),
+                    request.method, url, headers=req_headers, content=None if bodyless else request.stream(),
                 ),
                 stream=True,
             )
+        except ClientDisconnect:
+            return Response(status_code=499)
         except httpx.RequestError as exc:
             log.warning("upstream error: %s", exc)
             return HTMLResponse("Hermes is not reachable on loopback.", status_code=502)
 
-        return _ProxyResponse(upstream, compress=compressible_asset(request, upstream))
+        links = ()
+        if (preload and request.method == "GET" and request.url.path == "/" and
+                upstream.status_code == 200 and upstream.headers.get("content-type", "").startswith("text/html")):
+            links = preload.current()
+        # The official renderer sends several MB at cold boot. Negotiate a
+        # smaller wire representation without caching or buffering a bundle.
+        encoding = asset_encoding(request, upstream, prefer_zstd=handoff is not None)
+        return _ProxyResponse(upstream, encoding=encoding, gzip_level=5 if handoff else 1, links=links)
 
     async def proxy_ws(websocket: WebSocket) -> None:
         if not authed(websocket):
@@ -558,6 +533,8 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         try:
             yield
         finally:
+            if preload:
+                await preload.close()
             await client.aclose()
 
     return Starlette(
@@ -570,10 +547,6 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             # The terminal needs no upstream: it runs where the gate runs.
             Route(tui_webapp.TUI, tui_shell, methods=["GET"]),
             Route(tui_webapp.TUI + "/{asset}", tui_asset, methods=["GET"]),
-            *([Route(fast_webapp.FAST, fast_shell, methods=["GET"]),
-               Route(fast_webapp.APP, fast_shell, methods=["GET"]),
-               Route(fast_webapp.FAST + "/build/{generation}/{asset:path}", fast_asset, methods=["GET"]),
-               Route(fast_webapp.FAST + "/connect", fast_connect, methods=["GET"])] if handoff else []),
             WebSocketRoute(tui_webapp.SOCKET, tui_socket),
             WebSocketRoute("/{path:path}", proxy_ws),
             Route("/{path:path}", proxy_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),

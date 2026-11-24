@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import getpass
 import sys
-from pathlib import Path
+
+from . import webapp_mode
 
 
 def register_cli(subparser: argparse.ArgumentParser) -> None:
@@ -28,8 +29,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     ca.add_argument("--name", default="device", help="Label for this client (default: device)")
     subs.add_parser("doctor", help="Check tor, passphrase, webapp, processes")
     webapp = subs.add_parser("webapp", help="Choose the default browser interface")
-    webapp.add_argument("mode", nargs="?", choices=("hermes", "fast", "tui", "status"), default="status")
-    webapp.add_argument("--source", type=Path, help="Build Fast from this Hermes source checkout")
+    webapp.add_argument("mode", nargs="?", choices=(*webapp_mode.MODES, "status"), default="status")
     subparser.set_defaults(func=styx_command)
 
 
@@ -57,32 +57,21 @@ def styx_command(args: argparse.Namespace) -> int:
         if cmd == "doctor":
             return _doctor()
         if cmd == "webapp":
-            return _webapp(args.mode, source=args.source)
+            return _webapp(args.mode)
     except KeyboardInterrupt:
         return 130
     print(f"unknown subcommand: {cmd}")
     return 2
 
 
-def _webapp(mode: str, *, source: Path | None = None) -> int:
-    from . import fast_webapp, paths
-    from .supervisor import target_name
+def _webapp(mode: str) -> int:
+    from . import paths
 
     try:
         root = paths.data_dir()
-        if source is not None and mode != "fast":
-            print("styx: --source requires webapp fast.", file=sys.stderr)
-            return 1
-        if mode == "fast":
-            if target_name() != "webapp":
-                print("styx: Fast requires target=webapp, not dashboard.", file=sys.stderr)
-                return 1
-            if source is not None or fast_webapp.current_build(root) is None:
-                print("Building Hermes Fast…", flush=True)
-                fast_webapp.build(root, source or (Path.home() / ".hermes" / "hermes-agent"))
         if mode != "status":
-            fast_webapp.write_mode(root, mode)
-        print(f"webapp: {fast_webapp.read_mode(root)}")
+            webapp_mode.write_mode(root, mode)
+        print(f"webapp: {webapp_mode.read_mode(root)}")
         return 0
     except OSError as exc:
         print(f"styx: {exc}", file=sys.stderr)

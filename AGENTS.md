@@ -34,11 +34,12 @@ Tor Browser → http://<v3>.onion
 | `backend/webapp_ensure.py` | enable webapp + bring up gateway |
 | `backend/gate.py` | Starlette 1.9 `lifespan=` (not `on_shutdown`); HTTP+WS proxy |
 | `backend/webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
-| `backend/fast_webapp.py`, `frontend/webapp-fast/` | separate, pruned build of the official renderer using the same native browser grant; scope in `docs/FAST.md` |
+| `backend/webapp_mode.py` | preference for the official Webapp or TUI |
+| `backend/webapp_preload.py` | optional HTTP preload hints from the official renderer manifest, no HTML rewriting |
 | `backend/tui_webapp.py`, `assets/tui/` | opt-in terminal page; vendored xterm.js, no external assets |
 | `backend/terminal.py` | POSIX PTY running the fixed `hermes --tui`; never a client-chosen command |
 | `backend/headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
-| `backend/asset_transfer.py` | negotiated streaming gzip for public immutable hashed JS/CSS only; no shared cache |
+| `backend/asset_transfer.py` | negotiated streaming compression for public immutable hashed JS/CSS only; no shared cache |
 | `backend/network.py` | shared loopback validation and port readiness helpers |
 | `backend/storage.py` | atomic 0600 writes for passwords, state and process identities |
 | `backend/platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
@@ -94,7 +95,7 @@ No pytest in the Hermes venv — use stdlib `unittest`.
   WebSockets within one second. Do not cache the password hash at gate startup.
 - Already encoded responses, APIs and auth pages stay raw: preserve
   Content-Encoding/Length and duplicate Set-Cookie headers. Only unencoded,
-  public immutable hashed JS/CSS may use negotiated streaming gzip; respect
+  public immutable hashed JS/CSS may use negotiated streaming compression (gzip, or zstd if both sides support it); respect
   ranges/no-transform, weaken ETags and remove original byte lengths/digests.
   Never cache private content or launch tickets. WebSocket handshake headers
   belong to the upstream client.

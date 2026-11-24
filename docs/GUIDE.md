@@ -38,26 +38,12 @@ Les lancements sont limités en concurrence et en nombre de passages en attente.
 
 ## Chargement et performances
 
-### Styx Fast (optionnel)
-
-```bash
-hermes styx webapp fast     # compiler au besoin et ouvrir la copie réduite par défaut
-hermes styx webapp hermes   # revenir à la webapp officielle
-hermes styx webapp status   # afficher le mode enregistré
-```
-
-Le choix est propre au profil et s'applique à la prochaine ouverture de l'adresse principale avec un gate à jour. `hermes` reste le défaut. Après mise à jour du plugin, redémarrez Styx pour charger le nouveau code. Fast est disponible pour `target: webapp`, pas pour le dashboard.
-
-Fast compile une copie du code officiel avec son vrai fil de chat et son éditeur React, sans les autres écrans. Consultez le [périmètre conservé](FAST.md). La compilation demande Node.js 26 ou plus récent, Git et une copie source propre d’Hermes à la révision indiquée dans [`frontend/webapp-fast/build.mjs`](../frontend/webapp-fast/build.mjs), avec ses dépendances Webapp (`hermes webapp --build-only`). La compilation est réutilisée lors des bascules suivantes. Pour compiler depuis un autre checkout, utilisez `hermes styx webapp fast --source /chemin/vers/hermes-agent`. **Settings → Open full Hermes** ouvre toujours la Webapp officielle.
-
-La page Cerberus ne change pas. Fast ne réutilise que l'autorisation native encore valide de l'onglet ; sinon il passe par le lancement officiel et l'échange à usage unique. Une installation qui exige une connexion Hermes supplémentaire ouvre l'interface officielle. Fast nécessite un Hermes dont le WebSocket prend en charge `hermes-gateway-v1` et les sessions GUI. Le service Hermes, ses données et ses fichiers ne sont pas modifiés.
-
 ### Terminal Hermes (TUI, optionnel)
 
 ```bash
 hermes styx webapp tui      # terminal Hermes par défaut
-hermes styx webapp fast     # revenir à la copie réduite
 hermes styx webapp hermes   # revenir à la webapp officielle
+hermes styx webapp status   # afficher le mode enregistré
 ```
 
 Le mode `tui` sert une page terminal derrière Cerberus. Son WebSocket ouvre un pseudo-terminal sur l'hôte et y lance la commande fixe `hermes --tui` : aucune commande, aucun argument et aucun dossier de travail ne viennent du navigateur. Styx n'expose donc pas un shell, seulement le TUI d'Hermes. Le terminal est rendu localement par xterm.js embarqué (MIT, `assets/tui/vendor/`), sans ressource externe.
@@ -72,13 +58,15 @@ L'ordre visé est : structure et styles essentiels, connexion sécurisée et lis
 
 Ce découpage fonctionnel n'est **pas encore implémenté** : plusieurs fonctions sont regroupées dans les mêmes fichiers Hermes. Styx ne réécrit pas sa webapp ni ses imports pour les séparer.
 
-Un essai contrôlé dans Tor Browser, avec une instance de Styx et une adresse onion de diagnostic temporaires reliées au même backend Hermes, a comparé le chargement sans cache avec et sans indications HTTP de préchargement. L'essai JS a provoqué des téléchargements en double. L'essai limité aux styles a fait arriver le CSS principal plus tôt, mais n'a pas réduit le temps jusqu'à l'interface utilisable : environ 65 s sans priorité contre 81 s avec, puis 24 s au rechargement avec cache. Il s'agit d'un seul comparatif, sensible aux variations Tor, pas d'une preuve de régression causale ni d'une mesure de Pi. Le rechargement chaud n'avait pas de témoin chaud dans cette série.
+Après Cerberus, Styx lit en arrière-plan le manifeste public de la Webapp officielle. Sur la réponse du workspace, il ajoute des en-têtes `Link` pour télécharger plus tôt le module et le CSS principaux, sans modifier le HTML ni exécuter le module avant le démarrage natif. Si le manifeste est indisponible ou inconnu, le chargement normal continue.
 
-Faute de gain global démontré, ces indications de préchargement ont été retirées, pas activées sur le Styx habituel. La compression et le cache natif déjà présents restent conservés. La prochaine piste est le découpage réel du démarrage Hermes autour des sessions et du chat, à étudier via une évolution compatible d'Hermes, sans modifier son authentification. Cerberus reste autonome, sans requêtes supplémentaires ni accès aux messages privés avant connexion.
+Sur trois ouvertures à froid en Chromium (200 ms de latence, 3 Mbit/s simulés), le champ de saisie était visible en médiane **12,5 s** après validation du mot de passe, contre **14,4 s** avant. Les fichiers statiques reçus jusqu'à cet affichage sont passés de **4,04 Mo à 3,48 Mo**. Ce test est local, pas une mesure du réseau Tor. Le moteur de Tor Browser a aussi été vérifié en local : un seul téléchargement du module et du CSS principaux chacun.
+
+Avec Zstandard, le même scénario mesure **12,0 s à froid** et **2,3 s à la réouverture**, pour **3,07 Mo** de fichiers statiques à froid. Précharger davantage de modules n'a pas amélioré l'affichage. Viser cinq secondes à froid à ce débit demande de sortir du graphe de démarrage d'Hermes les modules non nécessaires au premier écran, pour les charger à leur première utilisation. Ne pas confondre ce budget avec le temps de génération des réponses du modèle.
 
 - **Cerberus** conserve exactement la même peinture, le même formulaire et aucune ressource externe. Le formulaire précède désormais les données de l'image dans le HTML pour pouvoir s'afficher sans attendre la peinture complète. La page utilise gzip si le navigateur l'accepte, sans mise en cache du formulaire ni de son jeton CSRF.
 - **Après le mot de passe**, Styx demande directement le passage natif Hermes : un aller-retour vers la racine est supprimé. Aucune autorisation n'est créée avant la vérification du mot de passe. Les nouveaux onglets et rechargements utilisent toujours le flux officiel.
-- **Scripts et styles** : seuls les fichiers JS/CSS versionnés sous `/assets/`, explicitement publics et immuables côté Hermes, peuvent être compressés en streaming. La compression reste hors de la boucle réseau. Les réponses déjà encodées, les plages de téléchargement, `no-transform` et les réponses portant des cookies ne sont pas transformées.
+- **Scripts et styles** : seuls les fichiers JS/CSS versionnés sous `/assets/`, explicitement publics et immuables côté Hermes, peuvent être compressés en streaming. La Webapp négocie Zstandard avec un navigateur compatible si le Python de Styx fournit ce module (Python 3.14 ou plus récent) ; gzip niveau 5 reste disponible. La compression reste hors de la boucle réseau. Les réponses déjà encodées, les plages de téléchargement, `no-transform` et les réponses portant des cookies ne sont pas transformées.
 - **Cache** : les directives natives d'Hermes sont conservées. Styx n'ajoute ni cache partagé ni stockage de données privées, de réponses API ou de tickets. Les pages natives d'authentification et les API restent transmises sans compression supplémentaire.
 
 L'en-tête `Server-Timing: styx-launch;dur=…` sur les redirections de lancement donne le temps serveur du passage Hermes, sans divulguer son lien ou son ticket. Il aide à distinguer un lanceur lent du transfert des fichiers par Tor.

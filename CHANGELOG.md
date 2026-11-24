@@ -4,6 +4,28 @@ All notable changes to Styx are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-24
+
+### Added
+
+- AVIF login crops with a WebP fallback: roughly 35–45 % fewer bytes for the
+  same painting, still prebuilt and served from immutable content-addressed
+  URLs.
+- `scripts/bench_login_tor.py`: measures the login page and painting over an
+  existing Tor SOCKS proxy without printing the onion address.
+- Opt-in real-Hermes contract checks (`STYX_HERMES_INTEGRATION=1`): renderer
+  manifest preload links and the public `hermes webapp --no-open` launch output.
+
+### Security
+
+- Restrictive CSP, `X-Frame-Options: DENY` and `nosniff` on the login page.
+- Cross-origin WebSocket handshakes and cross-origin mutations are rejected.
+- Logout revokes the session token through a bounded in-memory deny-list, even
+  if the cookie is replayed.
+- Upstream `Set-Cookie` headers can no longer set or clear `styx_*` cookies.
+- The painting markup now follows the form, so the password field arrives
+  before any image URL.
+
 ## [0.2.0] - 2026-11-24
 
 ### Added

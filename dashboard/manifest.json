@@ -3,7 +3,7 @@
   "label": "Styx",
   "description": "Tor onion gate — Cerberus login, onion URL, start/stop",
   "icon": "Globe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "tab": {
     "path": "/styx",
     "position": "after:skills"

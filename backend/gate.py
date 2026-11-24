@@ -79,8 +79,8 @@ def _same_origin(connection: Request | WebSocket) -> bool:
     origin = connection.headers.get("origin")
     if not origin:
         return True
-    host = connection.headers.get("host", "")
-    return _authority(origin) is not None and _authority(origin) == _authority("http://" + host)
+    expected = _authority("http://" + connection.headers.get("host", ""))
+    return _authority(origin) is not None and _authority(origin) == expected
 
 
 class _LoginLimiter:

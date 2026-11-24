@@ -15,7 +15,8 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import passwords, paths, tor_supervisor as tor  # noqa: E402
+from styx.backend import passwords, paths  # noqa: E402
+from styx.backend import tor_supervisor as tor
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -56,12 +57,19 @@ class GateHttp(unittest.TestCase):
                 env["PYTHONPATH"] = parent + os.pathsep + env.get("PYTHONPATH", "")
                 proc = subprocess.Popen(
                     [
-                        sys.executable, "-m", "styx.gate",
-                        "--data-dir", str(data),
-                        "--upstream-host", "127.0.0.1",
-                        "--upstream-port", str(up_port),
-                        "--port", str(gate_port),
-                        "--bind", "127.0.0.1",
+                        sys.executable,
+                        "-m",
+                        "styx.gate",
+                        "--data-dir",
+                        str(data),
+                        "--upstream-host",
+                        "127.0.0.1",
+                        "--upstream-port",
+                        str(up_port),
+                        "--port",
+                        str(gate_port),
+                        "--bind",
+                        "127.0.0.1",
                     ],
                     env=env,
                     stdout=subprocess.PIPE,
@@ -87,7 +95,9 @@ class GateHttp(unittest.TestCase):
                     self.assertTrue(csrf)
                     body = urlencode({"csrf": csrf, "password": "cerberus-gate-99"})
                     conn.request(
-                        "POST", "/login", body=body,
+                        "POST",
+                        "/login",
+                        body=body,
                         headers={
                             "Content-Type": "application/x-www-form-urlencoded",
                             "Cookie": f"styx_csrf={csrf}",

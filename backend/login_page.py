@@ -9,7 +9,6 @@ from functools import lru_cache
 
 from .paths import PLUGIN_ROOT
 
-
 # Prebuilt crops, not an unbounded request-time image resizing service. Widths
 # cap transfer/decode cost even on high-DPR phones. Keep the original as master.
 BACKGROUND_SIZES = {
@@ -42,10 +41,19 @@ def background_bytes(variant: str = _DEFAULT_BACKGROUND) -> bytes:
 
 
 @lru_cache(maxsize=len(BACKGROUND_SIZES))
+def background_digest(variant: str = _DEFAULT_BACKGROUND) -> str:
+    return hashlib.sha256(background_bytes(variant)).hexdigest()
+
+
+@lru_cache(maxsize=len(BACKGROUND_SIZES))
 def background_url(variant: str = _DEFAULT_BACKGROUND) -> str:
     # Only the public painting is cacheable; never the form or its CSRF token.
-    digest = hashlib.sha256(background_bytes(variant)).hexdigest()
-    return f"/_styx/login-background-{variant}-{digest}.webp"
+    return f"/_styx/login-background-{variant}-{background_digest(variant)}.webp"
+
+
+@lru_cache(maxsize=len(BACKGROUND_SIZES))
+def background_etag(variant: str = _DEFAULT_BACKGROUND) -> str:
+    return f'"{background_digest(variant)}"'
 
 
 def _srcset(variants: tuple[str, ...]) -> str:
@@ -63,7 +71,8 @@ def _preview() -> str:
 def _painting() -> str:
     sources = "\n".join(
         f'<source media="{media}" srcset="{_srcset(variants)}" sizes="100vw">'
-        for media, variants in BACKGROUND_GROUPS if media
+        for media, variants in BACKGROUND_GROUPS
+        if media
     )
     fallback = BACKGROUND_GROUPS[-1][1]
     # No unconditional image preload: it would download the wrong crop as well
@@ -82,9 +91,7 @@ def render(error: str = "", csrf: str = "", next_path: str = "") -> str:
     # validates and caps it before it reaches this template.
     next_e = htmlmod.escape(next_path, quote=True) if next_path else ""
     next_input = f'    <input type="hidden" name="next" value="{next_e}">\n' if next_e else ""
-    banner = (
-        f'<p id="error" role="alert">{htmlmod.escape(error)}</p>' if error else ""
-    )
+    banner = f'<p id="error" role="alert">{htmlmod.escape(error)}</p>' if error else ""
     error_attrs = ' aria-invalid="true" aria-describedby="error"' if error else ""
     return f"""<!doctype html>
 <html lang="en">

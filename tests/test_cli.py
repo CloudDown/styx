@@ -27,7 +27,17 @@ class CliCommands(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
 
     def test_other_commands_remain_available(self):
-        for name in ("setup", "status", "start", "stop", "url", "passwd", "client-auth", "doctor", "webapp"):
+        for name in (
+            "setup",
+            "status",
+            "start",
+            "stop",
+            "url",
+            "passwd",
+            "client-auth",
+            "doctor",
+            "webapp",
+        ):
             with self.subTest(command=name):
                 args = self.parser.parse_args([name])
                 self.assertEqual(args.styx_command, name)

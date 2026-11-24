@@ -25,15 +25,14 @@ def register(ctx) -> None:
 
     def _slash(_raw: str) -> str:
         from .backend.supervisor import status
+
         st = status()
         if st["running"]:
             return "Styx is up. Onion URL is not sent in chat — run `hermes styx url` on the host."
         return "Styx is down. `hermes styx start` on the host."
 
     ctx.register_command(
-        "styx",
-        _slash,
-        description="Styx onion gate status (does not print the URL)",
+        "styx", _slash, description="Styx onion gate status (does not print the URL)"
     )
 
     if ctx.get_config("autostart", default=False):
@@ -43,6 +42,7 @@ def register(ctx) -> None:
 def _autostart() -> None:
     try:
         from .backend.supervisor import StyxError, start
+
         start(wait=False, may_restart_gateway=False)
         log.info("styx autostart: gate+tor launched")
     except StyxError as exc:

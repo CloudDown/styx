@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import types
-import os
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -33,8 +33,14 @@ class TorStartup(unittest.TestCase):
         self.assertNotIn("Log notice file", text)
 
     def test_tor_inherits_only_allowlisted_environment_variables(self):
-        allowed = {"PATH": "test-path", "HOME": "test-home", "SYSTEMROOT": "test-windows",
-                   "TEMP": "test-temp", "TMP": "test-tmp", "TMPDIR": "test-tmpdir"}
+        allowed = {
+            "PATH": "test-path",
+            "HOME": "test-home",
+            "SYSTEMROOT": "test-windows",
+            "TEMP": "test-temp",
+            "TMP": "test-tmp",
+            "TMPDIR": "test-tmpdir",
+        }
         parent = {**allowed, "OPENAI_API_KEY": "test-secret", "HERMES_HOME": "test-profile"}
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -63,8 +69,10 @@ class TorStartup(unittest.TestCase):
             root = Path(raw)
             (root / "tor").mkdir(mode=0o700)
             original = tor.render_torrc
+
             def offline(**kwargs):
                 return original(**kwargs) + "DisableNetwork 1\n"
+
             with patch.object(tor, "render_torrc", side_effect=offline):
                 process = tor.start_tor(root, 9130)
             try:
@@ -74,7 +82,9 @@ class TorStartup(unittest.TestCase):
                     process.wait(timeout=0.5)
                 self.assertEqual(tor.read_pid(root / "tor.pid"), process.pid)
                 self.assertTrue((root / "logs/tor.log").is_file())
-                self.assertNotIn("Failed to init Log", (root / "logs/tor.log").read_text(errors="replace"))
+                self.assertNotIn(
+                    "Failed to init Log", (root / "logs/tor.log").read_text(errors="replace")
+                )
             finally:
                 tor.stop_pid(root / "tor.pid", name="tor")
                 if process.poll() is None:

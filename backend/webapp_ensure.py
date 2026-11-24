@@ -52,7 +52,9 @@ def hermes_argv() -> list[str]:
     return [found] if found else [sys.executable, "-m", "hermes_cli.main"]
 
 
-def ensure_upstream(target: str, *, may_restart: bool = True, data_dir: Path | None = None) -> tuple[str, int]:
+def ensure_upstream(
+    target: str, *, may_restart: bool = True, data_dir: Path | None = None
+) -> tuple[str, int]:
     """Return (127.0.0.1, port) of a live upstream, enabling/restarting as needed.
 
     Raises RuntimeError with a user-facing message.
@@ -111,8 +113,11 @@ def _prepare_webapp(data_dir: Path | None) -> None:
         with log_path.open("ab") as log:
             result = subprocess.run(
                 hermes_argv() + ["webapp", "--build-only"],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                timeout=900, check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=900,
+                check=False,
             )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"webapp build timed out after 15 minutes — see {log_path}") from exc

@@ -56,18 +56,34 @@ def _windows_user_sid() -> str:
 
     api = ctypes.WinDLL("advapi32", use_last_error=True)
     lookup = api.LookupAccountNameW
-    lookup.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_void_p,
-                       ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR,
-                       ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD)]
+    lookup.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     lookup.restype = wintypes.BOOL
     size, domain_size, kind = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
     account = psutil.Process().username()
-    lookup(None, account, None, ctypes.byref(size), None, ctypes.byref(domain_size), ctypes.byref(kind))
+    lookup(
+        None, account, None, ctypes.byref(size), None, ctypes.byref(domain_size), ctypes.byref(kind)
+    )
     if not size.value:
         raise ctypes.WinError(ctypes.get_last_error())
     sid = ctypes.create_string_buffer(size.value)
     domain = ctypes.create_unicode_buffer(max(1, domain_size.value))
-    if not lookup(None, account, sid, ctypes.byref(size), domain, ctypes.byref(domain_size), ctypes.byref(kind)):
+    if not lookup(
+        None,
+        account,
+        sid,
+        ctypes.byref(size),
+        domain,
+        ctypes.byref(domain_size),
+        ctypes.byref(kind),
+    ):
         raise ctypes.WinError(ctypes.get_last_error())
     convert = api.ConvertSidToStringSidW
     convert.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
@@ -91,8 +107,12 @@ def _windows_private_acl(path: Path) -> None:
 
     api = ctypes.WinDLL("advapi32", use_last_error=True)
     convert = api.ConvertStringSecurityDescriptorToSecurityDescriptorW
-    convert.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
-                        ctypes.POINTER(wintypes.DWORD)]
+    convert.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     convert.restype = wintypes.BOOL
     descriptor = ctypes.c_void_p()
     sddl = f"D:P(A;OICI;FA;;;{_windows_user_sid()})(A;OICI;FA;;;SY)"
@@ -103,15 +123,28 @@ def _windows_private_acl(path: Path) -> None:
     kernel.LocalFree.restype = ctypes.c_void_p
     try:
         get_dacl = api.GetSecurityDescriptorDacl
-        get_dacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL),
-                            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+        get_dacl.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.BOOL),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(wintypes.BOOL),
+        ]
         get_dacl.restype = wintypes.BOOL
         present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), ctypes.c_void_p()
-        if not get_dacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+        if not get_dacl(
+            descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)
+        ):
             raise ctypes.WinError(ctypes.get_last_error())
         set_security = api.SetNamedSecurityInfoW
-        set_security.argtypes = [wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD,
-                                 ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        set_security.argtypes = [
+            wintypes.LPWSTR,
+            ctypes.c_int,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
         set_security.restype = wintypes.DWORD
         # DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
         error = set_security(str(path), 1, 0x80000004, None, None, dacl, None)

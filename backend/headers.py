@@ -2,18 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
-HOP_BY_HOP = frozenset({
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailer", "trailers", "transfer-encoding", "upgrade", "http2-settings",
-})
+HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "http2-settings",
+    }
+)
 
 # Hermes' DNS-rebinding guard rejects Host/Origin that are not the bind or
 # public_url. The gate owns the .onion Host; upstream must see loopback.
 _STRIP = HOP_BY_HOP | {
-    "host", "origin", "referer", "content-length", "x-forwarded-for",
-    "x-forwarded-host", "x-forwarded-proto", "forwarded",
+    "host",
+    "origin",
+    "referer",
+    "content-length",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "forwarded",
 }
 
 _STYX_COOKIE_PREFIX = "styx_"
@@ -31,8 +47,10 @@ def _items(headers) -> list[tuple[str, str]]:
 def _connection_headers(items: list[tuple[str, str]]) -> set[str]:
     return {
         token.strip().lower()
-        for key, value in items if key.lower() == "connection"
-        for token in value.split(",") if token.strip()
+        for key, value in items
+        if key.lower() == "connection"
+        for token in value.split(",")
+        if token.strip()
     }
 
 

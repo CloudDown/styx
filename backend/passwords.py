@@ -37,9 +37,7 @@ def check_passphrase(password: str) -> None:
 def hash_password(password: str, *, salt: bytes | None = None) -> str:
     check_passphrase(password)
     salt_b = salt if salt is not None else os.urandom(16)
-    dk = hashlib.scrypt(
-        password.encode("utf-8"), salt=salt_b, n=_N, r=_R, p=_P, dklen=_DKLEN,
-    )
+    dk = hashlib.scrypt(password.encode("utf-8"), salt=salt_b, n=_N, r=_R, p=_P, dklen=_DKLEN)
     return (
         f"scrypt$n={_N}$r={_R}$p={_P}$"
         f"{base64.b64encode(salt_b).decode()}$"
@@ -61,7 +59,7 @@ def verify_password(password: str, stored: str) -> bool:
         return False
     try:
         got = hashlib.scrypt(
-            password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=len(expected),
+            password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=len(expected)
         )
     except (ValueError, OverflowError):
         return False

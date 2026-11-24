@@ -45,9 +45,11 @@ class PluginEntrypoints(unittest.TestCase):
         self.assertEqual(name, "styx")
         for running in (True, False):
             with self.subTest(running=running):
-                with patch.object(supervisor, "status", return_value={
-                    "running": running, "url": "sensitive-address",
-                }):
+                with patch.object(
+                    supervisor,
+                    "status",
+                    return_value={"running": running, "url": "sensitive-address"},
+                ):
                     result = handler("")
                 self.assertIn("up" if running else "down", result)
                 self.assertNotIn("sensitive-address", result)
@@ -60,7 +62,8 @@ class PluginEntrypoints(unittest.TestCase):
     def test_relative_imports_work_under_a_hermes_package_alias(self):
         name = "_styx_layout_probe"
         spec = importlib.util.spec_from_file_location(
-            name, paths.PLUGIN_ROOT / "__init__.py",
+            name,
+            paths.PLUGIN_ROOT / "__init__.py",
             submodule_search_locations=[str(paths.PLUGIN_ROOT)],
         )
         module = importlib.util.module_from_spec(spec)
@@ -80,7 +83,7 @@ class PluginEntrypoints(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("fastapi"), "Dashboard needs FastAPI")
     def test_dashboard_backend_loads_without_a_package(self):
         spec = importlib.util.spec_from_file_location(
-            "_styx_dashboard_probe", paths.PLUGIN_ROOT / "dashboard/plugin_api.py",
+            "_styx_dashboard_probe", paths.PLUGIN_ROOT / "dashboard/plugin_api.py"
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)

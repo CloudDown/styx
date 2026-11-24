@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
+import contextlib
 import errno
+import json
 import os
 import select
 import shutil
@@ -35,12 +36,19 @@ def tor_binary() -> str | None:
     configured = os.environ.get("STYX_TOR_BINARY")
     if configured:
         candidate = Path(configured).expanduser()
-        return str(candidate.resolve()) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+        return (
+            str(candidate.resolve())
+            if candidate.is_file() and os.access(candidate, os.X_OK)
+            else None
+        )
     if sys.platform == "win32":
         # Prefer the real executable, not Scoop's shim (which injects another
         # torrc and spawns a different PID).
         scoop = Path(os.environ.get("SCOOP") or Path.home() / "scoop")
-        global_scoop = Path(os.environ.get("SCOOP_GLOBAL") or Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / "scoop")
+        global_scoop = Path(
+            os.environ.get("SCOOP_GLOBAL")
+            or Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / "scoop"
+        )
         for root in (scoop, global_scoop):
             executable = root / "apps/tor/current/tor/tor.exe"
             if executable.is_file():
@@ -56,14 +64,21 @@ def tor_binary() -> str | None:
         desktop = Path.home() / "Desktop"
         try:
             import winreg
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            ) as key:
                 desktop = Path(os.path.expandvars(winreg.QueryValueEx(key, "Desktop")[0]))
         except (ImportError, OSError):
             pass
         local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
-        for folder in (desktop / "Tor Browser", local / "Tor Browser",
-                       local / "Programs/Tor Browser", Path.home() / "Tor Browser"):
+        for folder in (
+            desktop / "Tor Browser",
+            local / "Tor Browser",
+            local / "Programs/Tor Browser",
+            Path.home() / "Tor Browser",
+        ):
             executable = folder / "Browser/TorBrowser/Tor/tor.exe"
             if executable.is_file():
                 return str(executable.resolve())
@@ -77,12 +92,7 @@ def _tor_path(path: Path) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_torrc(
-    *,
-    data_dir: Path,
-    gate_port: int,
-    client_auth: bool,
-) -> str:
+def render_torrc(*, data_dir: Path, gate_port: int, client_auth: bool) -> str:
     """Torrc for a hidden service that only exists to publish the gate.
 
     SocksPort 0: this instance is not a general proxy.
@@ -191,7 +201,7 @@ def _matches_command(argv: list[str], path: Path) -> bool:
     root = path.parent.resolve()
     if path.name == "gate.pid":
         marker, expected = "--data-dir", root
-        if not any(argv[i:i + 2] == ["-m", "styx.gate"] for i in range(len(argv) - 1)):
+        if not any(argv[i : i + 2] == ["-m", "styx.gate"] for i in range(len(argv) - 1)):
             return False
     elif path.name == "tor.pid" and Path(argv[0]).name.lower() in {"tor", "tor.exe"}:
         marker, expected = "-f", paths.torrc_path(root)
@@ -231,7 +241,8 @@ def _linux_process_info(pid: int, path: Path) -> dict | None:
         if not _matches_command(argv, path):
             return None
         return {
-            "pid": pid, "start_time": fields[19],
+            "pid": pid,
+            "start_time": fields[19],
             "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
         }
     except (OSError, ValueError, IndexError, UnicodeError):
@@ -244,8 +255,14 @@ def write_pid(path: Path, pid: int, *, process: subprocess.Popen | None = None) 
     deadline = time.monotonic() + 1.0
     while True:
         if process is not None and process.poll() is not None:
-            log_path = paths.tor_log_path(path.parent) if path.name == "tor.pid" else paths.gate_log_path(path.parent)
-            raise TorError(f"{path.stem} exited during startup (exit {process.returncode}) — see {log_path}")
+            log_path = (
+                paths.tor_log_path(path.parent)
+                if path.name == "tor.pid"
+                else paths.gate_log_path(path.parent)
+            )
+            raise TorError(
+                f"{path.stem} exited during startup (exit {process.returncode}) — see {log_path}"
+            )
         info = _process_info(pid, path)
         if info is not None:
             break
@@ -299,10 +316,8 @@ def stop_pid(path: Path, *, name: str = "process") -> None:
                         raise TorError(f"{name} did not stop")
             except ProcessLookupError:
                 pass
-            try:
+            with contextlib.suppress(ChildProcessError):
                 os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                pass
         path.unlink(missing_ok=True)
     finally:
         os.close(fd)
@@ -331,10 +346,8 @@ def terminate_child(proc: subprocess.Popen) -> None:
     """Rollback a child which failed before its pidfile could be recorded."""
     if proc.poll() is not None:
         return
-    try:
+    with contextlib.suppress(ProcessLookupError):
         proc.terminate()
-    except ProcessLookupError:
-        pass
     try:
         proc.wait(timeout=4)
     except subprocess.TimeoutExpired:

@@ -7,6 +7,7 @@ and never comes from the client: the gate exposes a terminal, not a shell.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import signal
@@ -30,9 +31,11 @@ def command() -> list[str] | None:
     The gateway's PATH does not always carry the user's bin directory, so the
     two standard install locations are checked before giving up.
     """
-    candidates = [shutil.which("hermes"),
-                  os.path.expanduser("~/.local/bin/hermes"),
-                  os.path.expanduser("~/.hermes/hermes-agent/.hermes/bin/hermes")]
+    candidates = [
+        shutil.which("hermes"),
+        os.path.expanduser("~/.local/bin/hermes"),
+        os.path.expanduser("~/.hermes/hermes-agent/.hermes/bin/hermes"),
+    ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return [candidate, *ARGV]
@@ -42,8 +45,15 @@ def command() -> list[str] | None:
 class Terminal:
     """One PTY child, read and written from the event loop (POSIX only)."""
 
-    def __init__(self, argv: list[str], *, cwd: str | None = None, cols: int = 80,
-                 rows: int = 24, env: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        argv: list[str],
+        *,
+        cwd: str | None = None,
+        cols: int = 80,
+        rows: int = 24,
+        env: dict[str, str] | None = None,
+    ) -> None:
         if os.name != "posix" or fcntl is None or termios is None:
             raise OSError("pseudo-terminals need a POSIX host")
         self._loop = asyncio.get_running_loop()
@@ -58,8 +68,14 @@ class Terminal:
             try:
                 self._resize_fd(slave, cols, rows)
                 proc = subprocess.Popen(
-                    argv, stdin=slave, stdout=slave, stderr=slave, cwd=cwd,
-                    env=env or os.environ.copy(), start_new_session=True, close_fds=True,
+                    argv,
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    cwd=cwd,
+                    env=env or os.environ.copy(),
+                    start_new_session=True,
+                    close_fds=True,
                 )
             finally:
                 os.close(slave)
@@ -74,10 +90,8 @@ class Terminal:
             os.set_blocking(master, False)
             self._loop.add_reader(master, self._readable)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 proc.kill()
-            except OSError:
-                pass
             os.close(master)
             raise
 
@@ -114,10 +128,8 @@ class Terminal:
         """Clamp, not reject: a hidden tab can report a 0×0 viewport."""
         if self._io_closed:
             return
-        try:
+        with contextlib.suppress(OSError):
             self._resize_fd(self._fd, max(20, min(500, cols)), max(4, min(300, rows)))
-        except OSError:
-            pass
 
     def write(self, data: bytes) -> None:
         if self._io_closed or not data:
@@ -133,14 +145,10 @@ class Terminal:
         if self._io_closed:
             return
         self._io_closed = True
-        try:
+        with contextlib.suppress(OSError, ValueError):
             self._loop.remove_reader(self._fd)
-        except (OSError, ValueError):
-            pass
-        try:
+        with contextlib.suppress(OSError, ValueError):
             self._loop.remove_writer(self._fd)
-        except (OSError, ValueError):
-            pass
         self.reader.put_nowait(None)
 
     def close(self) -> None:
@@ -150,14 +158,10 @@ class Terminal:
             return
         self._stop()
         self._reaped = True
-        try:
+        with contextlib.suppress(OSError, ProcessLookupError):
             os.killpg(self._proc.pid, signal.SIGHUP)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
+        with contextlib.suppress(OSError):
             os.close(self._fd)
-        except OSError:
-            pass
         threading.Thread(target=self._reap, daemon=True).start()
 
     def _reap(self) -> None:
@@ -166,11 +170,7 @@ class Terminal:
             return
         except subprocess.TimeoutExpired:
             pass
-        try:
+        with contextlib.suppress(OSError, ProcessLookupError):
             os.killpg(self._proc.pid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             self._proc.wait(timeout=1.5)
-        except subprocess.TimeoutExpired:
-            pass

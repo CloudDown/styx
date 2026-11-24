@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,8 +15,8 @@ from typing import Any
 from . import paths
 from . import tor_supervisor as tor
 from .network import port_open, require_loopback, upstream_health, wait_port
-from .storage import write_private
 from .platform_support import detached_process_options, lock_exclusive, private_dir
+from .storage import write_private
 
 
 class StyxError(RuntimeError):
@@ -25,6 +26,7 @@ class StyxError(RuntimeError):
 def _settings() -> dict[str, Any]:
     try:
         from hermes_cli.config import load_config_readonly
+
         cfg = load_config_readonly() or {}
         entry = ((cfg.get("plugins") or {}).get("entries") or {}).get("styx") or {}
         settings = entry.get("settings") or {}
@@ -52,6 +54,7 @@ def resolve_upstream() -> tuple[str, int]:
     host = "127.0.0.1"
     try:
         from hermes_cli.config import load_config_readonly
+
         cfg = load_config_readonly() or {}
     except Exception:
         cfg = {}
@@ -92,6 +95,7 @@ def status(data_dir: Path | None = None) -> dict[str, Any]:
     upstream_ok, health_error = upstream_health(up_host, up_port)
     upstream_error = upstream_error or health_error
     from . import passwords as pw
+
     return {
         "running": bool(gate_pid and tor_pid),
         "gate_pid": gate_pid,
@@ -122,32 +126,43 @@ def start(
     root = data_dir or paths.data_dir()
     try:
         with _operation_lock(root):
-            return _start_locked(root, wait=wait, client_auth=client_auth, may_restart_gateway=may_restart_gateway)
+            return _start_locked(
+                root, wait=wait, client_auth=client_auth, may_restart_gateway=may_restart_gateway
+            )
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         raise StyxError(str(exc)) from exc
 
 
 @contextmanager
-def _operation_lock(root: Path):
+def _operation_lock(root: Path) -> Iterator[None]:
     private_dir(root)
-    fd = os.open(root / "supervisor.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0), 0o600)
+    fd = os.open(
+        root / "supervisor.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0), 0o600
+    )
     try:
         try:
             lock_exclusive(fd)
         except BlockingIOError as exc:
-            raise StyxError("another Styx start/stop operation is in progress; retry shortly") from exc
+            raise StyxError(
+                "another Styx start/stop operation is in progress; retry shortly"
+            ) from exc
         yield
     finally:
         os.close(fd)
 
 
-def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gateway: bool) -> dict[str, Any]:
+def _start_locked(
+    root: Path, *, wait: bool, client_auth: bool, may_restart_gateway: bool
+) -> dict[str, Any]:
     from . import passwords as pw
     from .webapp_ensure import ensure_upstream
+
     if not pw.read_hash(paths.passwd_path(root)):
         raise StyxError("no passphrase — run: hermes styx passwd")
     if not tor.tor_binary():
-        raise StyxError("Tor is missing — run hermes styx setup in a host terminal, or set STYX_TOR_BINARY")
+        raise StyxError(
+            "Tor is missing — run hermes styx setup in a host terminal, or set STYX_TOR_BINARY"
+        )
     target = target_name()
     try:
         up_host, up_port = ensure_upstream(target, may_restart=may_restart_gateway, data_dir=root)
@@ -155,9 +170,18 @@ def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gate
         raise StyxError(str(exc)) from exc
     current = status(root)
     gport = gate_port()
-    if current["running"] and current.get("onion") and (
-        current["gate_port"], current["upstream_host"], current["upstream_port"], current["client_auth"]
-    ) == (gport, up_host, up_port, client_auth) and current.get("webapp_handoff", False) == (target == "webapp"):
+    if (
+        current["running"]
+        and current.get("onion")
+        and (
+            current["gate_port"],
+            current["upstream_host"],
+            current["upstream_port"],
+            current["client_auth"],
+        )
+        == (gport, up_host, up_port, client_auth)
+        and current.get("webapp_handoff", False) == (target == "webapp")
+    ):
         return current
     if current["gate_pid"] or current["tor_pid"]:
         _stop_locked(root)
@@ -169,7 +193,9 @@ def _start_locked(root: Path, *, wait: bool, client_auth: bool, may_restart_gate
     try:
         gate_proc = _spawn_gate(root, up_host, up_port, gport, webapp_handoff=(target == "webapp"))
         if not wait_port("127.0.0.1", gport, timeout=8.0) or gate_proc.poll() is not None:
-            raise StyxError(f"gate did not bind 127.0.0.1:{gport} — see {paths.gate_log_path(root)}")
+            raise StyxError(
+                f"gate did not bind 127.0.0.1:{gport} — see {paths.gate_log_path(root)}"
+            )
         tor.start_tor(root, gport, client_auth=client_auth)
         try:
             onion = tor.wait_for_hostname(root, timeout=90.0 if wait else 8.0)
@@ -214,8 +240,9 @@ def _stop_locked(root: Path) -> None:
         raise StyxError("; ".join(errors))
 
 
-def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int, *,
-                webapp_handoff: bool = False) -> subprocess.Popen:
+def _spawn_gate(
+    root: Path, up_host: str, up_port: int, gport: int, *, webapp_handoff: bool = False
+) -> subprocess.Popen:
     parent = str(paths.PLUGIN_ROOT.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = parent + os.pathsep + env.get("PYTHONPATH", "")
@@ -225,13 +252,21 @@ def _spawn_gate(root: Path, up_host: str, up_port: int, gport: int, *,
     with open(log, "ab", buffering=0) as log_f:
         proc = subprocess.Popen(
             [
-                sys.executable, "-m", f"{pkg}.gate",
-                "--data-dir", str(root),
-                "--upstream-host", up_host,
-                "--upstream-port", str(up_port),
-                "--port", str(gport),
-                "--bind", "127.0.0.1",
-            ] + (["--webapp-handoff"] if webapp_handoff else []),
+                sys.executable,
+                "-m",
+                f"{pkg}.gate",
+                "--data-dir",
+                str(root),
+                "--upstream-host",
+                up_host,
+                "--upstream-port",
+                str(up_port),
+                "--port",
+                str(gport),
+                "--bind",
+                "127.0.0.1",
+            ]
+            + (["--webapp-handoff"] if webapp_handoff else []),
             stdin=subprocess.DEVNULL,
             stdout=log_f,
             stderr=subprocess.STDOUT,

@@ -42,7 +42,9 @@ def _linux_install_command() -> list[str]:
     else:
         choices = [name for name in installers if shutil.which(name)]
         if len(choices) != 1:
-            raise SetupError("Cannot select the system package manager safely; install Tor manually.")
+            raise SetupError(
+                "Cannot select the system package manager safely; install Tor manually."
+            )
     for name in choices:
         executable = shutil.which(name)
         if executable:
@@ -62,8 +64,14 @@ def install_command() -> list[str]:
     if sys.platform == "darwin":
         brew = shutil.which("brew")
         if not brew:
-            brew = next((p for p in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew")
-                         if os.path.isfile(p) and os.access(p, os.X_OK)), None)
+            brew = next(
+                (
+                    p
+                    for p in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew")
+                    if os.path.isfile(p) and os.access(p, os.X_OK)
+                ),
+                None,
+            )
         if brew:
             return [brew, "install", "tor"]
         raise SetupError("Install Homebrew first, or install Tor manually and set STYX_TOR_BINARY.")
@@ -80,9 +88,21 @@ def install_command() -> list[str]:
         if winget:
             # winget has Tor Browser, not an Expert Bundle package. Make this
             # larger installation explicit and leave agreement prompts intact.
-            return [winget, "install", "--exact", "--id", "TorProject.TorBrowser",
-                    "--source", "winget", "--scope", "user", "--interactive"]
-        raise SetupError("Install Scoop/winget or the Tor Expert Bundle, then run hermes styx setup.")
+            return [
+                winget,
+                "install",
+                "--exact",
+                "--id",
+                "TorProject.TorBrowser",
+                "--source",
+                "winget",
+                "--scope",
+                "user",
+                "--interactive",
+            ]
+        raise SetupError(
+            "Install Scoop/winget or the Tor Expert Bundle, then run hermes styx setup."
+        )
     raise SetupError(f"Automatic Tor installation is not supported on {sys.platform}.")
 
 
@@ -100,7 +120,10 @@ def ensure_tor() -> str:
     print("Tor is missing. Styx can install it through your package manager.")
     if "TorProject.TorBrowser" in command:
         print("winget will install the official Tor Browser, which includes the Tor executable.")
-    print("Command: " + (subprocess.list2cmdline(command) if sys.platform == "win32" else shlex.join(command)))
+    print(
+        "Command: "
+        + (subprocess.list2cmdline(command) if sys.platform == "win32" else shlex.join(command))
+    )
     print("The package manager may request administrator access and display agreement prompts.")
     try:
         approved = input("Proceed with this installation? [y/N] ").strip().casefold()
@@ -115,7 +138,9 @@ def ensure_tor() -> str:
     except OSError as exc:
         raise SetupError(f"Could not run the package manager: {exc}") from exc
     if result.returncode:
-        raise SetupError(f"Tor installation failed (exit {result.returncode}); fix the package-manager error above.")
+        raise SetupError(
+            f"Tor installation failed (exit {result.returncode}); fix the package-manager error above."
+        )
     binary = tor_binary()
     if not binary:
         raise SetupError(

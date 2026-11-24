@@ -14,7 +14,8 @@ import psutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import platform_support as platform, tor_supervisor as tor  # noqa: E402
+from styx.backend import platform_support as platform  # noqa: E402
+from styx.backend import tor_supervisor as tor
 
 
 class PlatformSupport(unittest.TestCase):
@@ -38,7 +39,9 @@ class PlatformSupport(unittest.TestCase):
             fake.locking.assert_called_once_with(file.fileno(), 2, 1)
 
     def test_windows_lock_contention_maps_to_busy(self):
-        fake = types.SimpleNamespace(LK_NBLCK=2, locking=Mock(side_effect=OSError(errno.EACCES, "busy")))
+        fake = types.SimpleNamespace(
+            LK_NBLCK=2, locking=Mock(side_effect=OSError(errno.EACCES, "busy"))
+        )
         with tempfile.TemporaryFile() as file:
             with patch.object(platform, "IS_WINDOWS", True):
                 with patch.dict(sys.modules, {"msvcrt": fake}):
@@ -64,8 +67,13 @@ class PlatformSupport(unittest.TestCase):
             folder = platform.private_dir(Path(raw) / "private")
             api = ctypes.WinDLL("advapi32", use_last_error=True)
             read = api.GetFileSecurityW
-            read.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p,
-                             wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+            read.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                ctypes.POINTER(wintypes.DWORD),
+            ]
             read.restype = wintypes.BOOL
             size = wintypes.DWORD()
             read(str(folder), 4, None, 0, ctypes.byref(size))
@@ -73,17 +81,29 @@ class PlatformSupport(unittest.TestCase):
             descriptor = ctypes.create_string_buffer(size.value)
             self.assertTrue(read(str(folder), 4, descriptor, size, ctypes.byref(size)))
             get_control = api.GetSecurityDescriptorControl
-            get_control.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)]
+            get_control.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.WORD),
+                ctypes.POINTER(wintypes.DWORD),
+            ]
             get_control.restype = wintypes.BOOL
             control, revision = wintypes.WORD(), wintypes.DWORD()
             self.assertTrue(get_control(descriptor, ctypes.byref(control), ctypes.byref(revision)))
             self.assertTrue(control.value & 0x1000)  # SE_DACL_PROTECTED
             get_dacl = api.GetSecurityDescriptorDacl
-            get_dacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL),
-                                ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+            get_dacl.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.BOOL),
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(wintypes.BOOL),
+            ]
             get_dacl.restype = wintypes.BOOL
             present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), ctypes.c_void_p()
-            self.assertTrue(get_dacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)))
+            self.assertTrue(
+                get_dacl(
+                    descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)
+                )
+            )
             self.assertTrue(present.value and dacl.value)
 
     def test_portable_identity_checks_user_profile_and_creation_time(self):

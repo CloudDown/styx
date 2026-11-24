@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import bootstrap, cli, passwords, paths, supervisor, tor_supervisor as tor  # noqa: E402
+from styx.backend import bootstrap, cli, passwords, paths, supervisor  # noqa: E402
+from styx.backend import tor_supervisor as tor
 
 
 class Bootstrap(unittest.TestCase):
@@ -48,7 +49,9 @@ class Bootstrap(unittest.TestCase):
 
     def test_declining_confirmation_runs_nothing(self):
         with patch.object(tor, "tor_binary", return_value=None):
-            with patch.object(bootstrap, "install_command", return_value=["sudo", "apt-get", "install", "tor"]):
+            with patch.object(
+                bootstrap, "install_command", return_value=["sudo", "apt-get", "install", "tor"]
+            ):
                 with patch("builtins.input", return_value=""):
                     with patch.object(bootstrap.subprocess, "run") as run:
                         with self.assertRaisesRegex(bootstrap.SetupError, "cancelled"):
@@ -60,30 +63,46 @@ class Bootstrap(unittest.TestCase):
         with patch.object(tor, "tor_binary", side_effect=[None, "/usr/bin/tor"]) as detect:
             with patch.object(bootstrap, "install_command", return_value=command):
                 with patch("builtins.input", return_value="oui"):
-                    with patch.object(bootstrap.subprocess, "run", return_value=Mock(returncode=0)) as run:
+                    with patch.object(
+                        bootstrap.subprocess, "run", return_value=Mock(returncode=0)
+                    ) as run:
                         self.assertEqual(bootstrap.ensure_tor(), "/usr/bin/tor")
         run.assert_called_once_with(command, check=False)
         self.assertEqual(detect.call_count, 2)
 
     def test_failed_install_never_reports_ready(self):
         with patch.object(tor, "tor_binary", return_value=None):
-            with patch.object(bootstrap, "install_command", return_value=["manager", "install", "tor"]):
+            with patch.object(
+                bootstrap, "install_command", return_value=["manager", "install", "tor"]
+            ):
                 with patch("builtins.input", return_value="y"):
-                    with patch.object(bootstrap.subprocess, "run", return_value=Mock(returncode=23)):
+                    with patch.object(
+                        bootstrap.subprocess, "run", return_value=Mock(returncode=23)
+                    ):
                         with self.assertRaisesRegex(bootstrap.SetupError, "exit 23"):
                             bootstrap.ensure_tor()
 
     def test_success_without_discoverable_tor_is_an_actionable_failure(self):
         with patch.object(tor, "tor_binary", return_value=None):
-            with patch.object(bootstrap, "install_command", return_value=["manager", "install", "tor"]):
+            with patch.object(
+                bootstrap, "install_command", return_value=["manager", "install", "tor"]
+            ):
                 with patch("builtins.input", return_value="y"):
                     with patch.object(bootstrap.subprocess, "run", return_value=Mock(returncode=0)):
                         with self.assertRaisesRegex(bootstrap.SetupError, "STYX_TOR_BINARY"):
                             bootstrap.ensure_tor()
 
     def test_linux_uses_distribution_manager_and_normal_sudo_prompt(self):
-        commands = {"apt-get": "/usr/bin/apt-get", "pacman": "/usr/bin/pacman", "sudo": "/usr/bin/sudo"}
-        with patch.object(bootstrap.platform, "freedesktop_os_release", return_value={"ID": "ubuntu", "ID_LIKE": "debian"}):
+        commands = {
+            "apt-get": "/usr/bin/apt-get",
+            "pacman": "/usr/bin/pacman",
+            "sudo": "/usr/bin/sudo",
+        }
+        with patch.object(
+            bootstrap.platform,
+            "freedesktop_os_release",
+            return_value={"ID": "ubuntu", "ID_LIKE": "debian"},
+        ):
             with patch.object(bootstrap.shutil, "which", side_effect=commands.get):
                 with patch.object(bootstrap.os, "geteuid", return_value=1000, create=True):
                     self.assertEqual(
@@ -92,24 +111,38 @@ class Bootstrap(unittest.TestCase):
                     )
 
     def test_arch_install_never_performs_an_unrequested_system_upgrade(self):
-        with patch.object(bootstrap.platform, "freedesktop_os_release", return_value={"ID": "arch"}):
+        with patch.object(
+            bootstrap.platform, "freedesktop_os_release", return_value={"ID": "arch"}
+        ):
             with patch.object(bootstrap.shutil, "which", return_value="/usr/bin/pacman"):
                 with patch.object(bootstrap.os, "geteuid", return_value=0, create=True):
-                    self.assertEqual(bootstrap.install_command(), ["/usr/bin/pacman", "-S", "--needed", "tor"])
+                    self.assertEqual(
+                        bootstrap.install_command(), ["/usr/bin/pacman", "-S", "--needed", "tor"]
+                    )
 
     def test_macos_uses_existing_homebrew(self):
         self.terminal.platform = "darwin"
         with patch.object(bootstrap.shutil, "which", return_value="/opt/homebrew/bin/brew"):
-            self.assertEqual(bootstrap.install_command(), ["/opt/homebrew/bin/brew", "install", "tor"])
+            self.assertEqual(
+                bootstrap.install_command(), ["/opt/homebrew/bin/brew", "install", "tor"]
+            )
 
     def test_windows_prefers_scoop_expert_bundle(self):
         self.terminal.platform = "win32"
-        with patch.object(bootstrap.shutil, "which", side_effect=lambda name: {"scoop": "scoop.cmd", "winget": "winget.exe"}.get(name)):
+        with patch.object(
+            bootstrap.shutil,
+            "which",
+            side_effect=lambda name: {"scoop": "scoop.cmd", "winget": "winget.exe"}.get(name),
+        ):
             self.assertEqual(bootstrap.install_command(), ["scoop.cmd", "install", "tor"])
 
     def test_windows_winget_browser_install_keeps_agreements_explicit(self):
         self.terminal.platform = "win32"
-        with patch.object(bootstrap.shutil, "which", side_effect=lambda name: "winget.exe" if name == "winget" else None):
+        with patch.object(
+            bootstrap.shutil,
+            "which",
+            side_effect=lambda name: "winget.exe" if name == "winget" else None,
+        ):
             with patch.object(bootstrap.Path, "is_file", return_value=False):
                 command = bootstrap.install_command()
         self.assertIn("TorProject.TorBrowser", command)
@@ -121,10 +154,16 @@ class SetupCLI(unittest.TestCase):
     def setUp(self):
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
-        self.tor = self.enterContext(patch.object(bootstrap, "ensure_tor", return_value="/usr/bin/tor"))
+        self.tor = self.enterContext(
+            patch.object(bootstrap, "ensure_tor", return_value="/usr/bin/tor")
+        )
         self.enterContext(patch.object(paths, "passwd_path", return_value=Path("not-read")))
-        self.hash = self.enterContext(patch.object(passwords, "read_hash", return_value="existing-hash"))
-        self.start = self.enterContext(patch.object(supervisor, "start", return_value={"url": None}))
+        self.hash = self.enterContext(
+            patch.object(passwords, "read_hash", return_value="existing-hash")
+        )
+        self.start = self.enterContext(
+            patch.object(supervisor, "start", return_value={"url": None})
+        )
 
     def test_setup_subcommand_runs_the_complete_start_path(self):
         parser = argparse.ArgumentParser()
@@ -134,7 +173,9 @@ class SetupCLI(unittest.TestCase):
         self.tor.assert_called_once()
         self.start.assert_called_once_with(wait=False, client_auth=True)
 
-    def test_missing_password_is_requested_interactively_without_overwriting_existing_password(self):
+    def test_missing_password_is_requested_interactively_without_overwriting_existing_password(
+        self,
+    ):
         self.hash.return_value = None
         with patch.object(cli.sys.stdin, "isatty", return_value=True):
             with patch.object(cli, "_passwd", return_value=0) as password:

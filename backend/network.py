@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
 import socket
 import time
-import http.client
 
 
 def require_loopback(host: str) -> str:

@@ -13,10 +13,7 @@ from styx.backend.tor_supervisor import render_torrc  # noqa: E402
 
 class ProxyAndTorrc(unittest.TestCase):
     def test_strips_styx_cookie_keeps_others(self):
-        self.assertEqual(
-            strip_styx_cookies("styx_session=abc; hermes=1; styx_csrf=x"),
-            "hermes=1",
-        )
+        self.assertEqual(strip_styx_cookies("styx_session=abc; hermes=1; styx_csrf=x"), "hermes=1")
 
     def test_outbound_host_is_loopback(self):
         headers = outbound_headers(
@@ -50,7 +47,9 @@ class ProxyAndTorrc(unittest.TestCase):
             root = Path(raw)
             text = render_torrc(data_dir=root, gate_port=9130, client_auth=False)
             self.assertIn(f'DataDirectory "{(root / "tor").resolve().as_posix()}"', text)
-            self.assertIn(f'HiddenServiceDir "{(root / "hidden_service").resolve().as_posix()}"', text)
+            self.assertIn(
+                f'HiddenServiceDir "{(root / "hidden_service").resolve().as_posix()}"', text
+            )
 
     def test_connection_nominated_headers_are_removed_in_both_directions(self):
         incoming = [("Connection", "keep-alive, X-Private"), ("X-Private", "no"), ("Accept", "yes")]
@@ -60,17 +59,24 @@ class ProxyAndTorrc(unittest.TestCase):
 
     def test_response_preserves_encoding_length_and_duplicate_cookies(self):
         incoming = [
-            ("Content-Encoding", "gzip"), ("Content-Length", "123"),
-            ("Set-Cookie", "one=1"), ("Set-Cookie", "two=2"),
+            ("Content-Encoding", "gzip"),
+            ("Content-Length", "123"),
+            ("Set-Cookie", "one=1"),
+            ("Set-Cookie", "two=2"),
         ]
         self.assertEqual(inbound_response_headers(incoming), incoming)
 
     def test_websocket_headers_leave_negotiation_to_websockets(self):
         incoming = {
-            "Host": "test.local", "Sec-WebSocket-Key": "key", "Sec-WebSocket-Version": "13",
-            "Sec-WebSocket-Extensions": "permessage-deflate", "Sec-WebSocket-Protocol": "echo",
+            "Host": "test.local",
+            "Sec-WebSocket-Key": "key",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Extensions": "permessage-deflate",
+            "Sec-WebSocket-Protocol": "echo",
         }
-        outgoing = outbound_headers(incoming, upstream_host="127.0.0.1", upstream_port=9120, websocket=True)
+        outgoing = outbound_headers(
+            incoming, upstream_host="127.0.0.1", upstream_port=9120, websocket=True
+        )
         self.assertEqual(outgoing, [("Origin", "http://127.0.0.1:9120")])
 
 

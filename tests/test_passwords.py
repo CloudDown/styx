@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sys
 import os
+import sys
 import unittest
 from pathlib import Path
 
@@ -25,6 +25,7 @@ class Passwords(unittest.TestCase):
 
     def test_write_mode(self):
         import tempfile
+
         with tempfile.TemporaryDirectory() as raw:
             dest = Path(raw) / "passwd"
             passwords.write_hash(dest, "cerberus-gate-99")

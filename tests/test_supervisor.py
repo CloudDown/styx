@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import passwords, paths, supervisor, tor_supervisor as tor  # noqa: E402
+from styx.backend import passwords, paths, supervisor  # noqa: E402
+from styx.backend import tor_supervisor as tor
 from styx.backend.network import wait_port  # noqa: E402
 
 
@@ -27,14 +28,21 @@ class Supervisor(unittest.TestCase):
         hs = paths.hidden_service_dir(self.root)
         (hs / "identity-sentinel").write_bytes(b"must survive stop and rollback")
         self.current = {
-            "running": False, "onion": None, "gate_pid": None, "tor_pid": None,
-            "gate_port": 9130, "upstream_host": "127.0.0.1", "upstream_port": 9120,
+            "running": False,
+            "onion": None,
+            "gate_pid": None,
+            "tor_pid": None,
+            "gate_port": 9130,
+            "upstream_host": "127.0.0.1",
+            "upstream_port": 9120,
             "client_auth": False,
         }
 
     def mock_start(self):
         self.enterContext(patch.object(tor, "tor_binary", return_value="/usr/bin/tor"))
-        self.enterContext(patch("styx.backend.webapp_ensure.ensure_upstream", return_value=("127.0.0.1", 9120)))
+        self.enterContext(
+            patch("styx.backend.webapp_ensure.ensure_upstream", return_value=("127.0.0.1", 9120))
+        )
         self.enterContext(patch.object(supervisor, "status", return_value=self.current))
         self.enterContext(patch.object(supervisor, "gate_port", return_value=9130))
         self.enterContext(patch.object(supervisor, "target_name", return_value="webapp"))
@@ -47,7 +55,9 @@ class Supervisor(unittest.TestCase):
         self.stop_pid = self.enterContext(patch.object(tor, "stop_pid"))
 
     def assert_cleaned(self):
-        self.assertEqual([call.kwargs["name"] for call in self.stop_pid.call_args_list], ["tor", "gate"])
+        self.assertEqual(
+            [call.kwargs["name"] for call in self.stop_pid.call_args_list], ["tor", "gate"]
+        )
         self.assertEqual(
             (paths.hidden_service_dir(self.root) / "identity-sentinel").read_bytes(),
             b"must survive stop and rollback",
@@ -115,17 +125,21 @@ class Supervisor(unittest.TestCase):
 
     def test_current_handoff_gate_is_not_restarted_on_repeated_start(self):
         self.mock_start()
-        self.current.update(running=True, onion="synthetic", gate_pid=123, tor_pid=456, webapp_handoff=True)
+        self.current.update(
+            running=True, onion="synthetic", gate_pid=123, tor_pid=456, webapp_handoff=True
+        )
         supervisor.start(data_dir=self.root)
         self.spawn.assert_not_called()
         self.stop_pid.assert_not_called()
 
     def test_start_and_stop_are_exclusive_even_across_threads(self):
         entered, release = threading.Event(), threading.Event()
+
         def starting(*args, **kwargs):
             entered.set()
             self.assertTrue(release.wait(timeout=3))
             return {"running": True}
+
         with ThreadPoolExecutor(max_workers=1) as pool:
             with patch.object(supervisor, "_start_locked", side_effect=starting):
                 with patch.object(supervisor, "_stop_locked") as stopping:
@@ -140,7 +154,9 @@ class Supervisor(unittest.TestCase):
                     self.assertTrue(running.result(timeout=3)["running"])
 
     def test_stop_attempts_gate_cleanup_even_if_tor_stop_fails(self):
-        with patch.object(tor, "stop_pid", side_effect=[tor.TorError("cannot stop tor"), None]) as stopping:
+        with patch.object(
+            tor, "stop_pid", side_effect=[tor.TorError("cannot stop tor"), None]
+        ) as stopping:
             with self.assertRaisesRegex(supervisor.StyxError, "cannot stop tor"):
                 supervisor.stop(data_dir=self.root)
         self.assertEqual([c.kwargs["name"] for c in stopping.call_args_list], ["tor", "gate"])

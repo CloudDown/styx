@@ -16,6 +16,7 @@ class Health(unittest.TestCase):
         self.code, self.body, self.location = 200, b"<!doctype html><title>Hermes</title>", None
         self.calls = 0
         test = self
+
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 test.calls += 1
@@ -27,6 +28,7 @@ class Health(unittest.TestCase):
 
             def log_message(self, *args):
                 pass
+
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

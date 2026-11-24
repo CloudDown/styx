@@ -13,10 +13,12 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install lint dependency
-        run: python -m pip install "pyflakes>=3.2,<5"
-      - name: Lint undefined names and unused imports
+        run: python -m pip install "ruff>=0.17,<0.18"
+      - name: Lint and check formatting
         working-directory: styx
-        run: python -m pyflakes backend __init__.py gate.py dashboard tests scripts
+        run: |
+          ruff check
+          ruff format --check
 
   test:
     strategy:

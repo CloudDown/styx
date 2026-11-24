@@ -45,7 +45,7 @@ def launch_links(manifest: object) -> tuple[str, ...]:
 class WebappPreload:
     """One bounded background manifest lookup per gate, never on the render path."""
 
-    def __init__(self, client: httpx.AsyncClient, upstream: str):
+    def __init__(self, client: httpx.AsyncClient, upstream: str) -> None:
         self.client = client
         self.url = upstream + _MANIFEST
         self.links: tuple[str, ...] = ()
@@ -82,9 +82,13 @@ class WebappPreload:
                         self.links = previous
                         self._etag = headers["If-None-Match"]
                         return
-                    if (response.status_code != 200 or "content-encoding" in response.headers or
-                            "set-cookie" in response.headers or
-                            response.headers.get("content-type", "").split(";")[0] != "application/json"):
+                    if (
+                        response.status_code != 200
+                        or "content-encoding" in response.headers
+                        or "set-cookie" in response.headers
+                        or response.headers.get("content-type", "").split(";")[0]
+                        != "application/json"
+                    ):
                         return
                     data = bytearray()
                     async for chunk in response.aiter_raw():

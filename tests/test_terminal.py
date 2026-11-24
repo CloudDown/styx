@@ -24,8 +24,9 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
             data += chunk
 
     async def test_a_child_sees_a_real_terminal_and_its_output_reaches_us(self):
-        session = terminal.Terminal([sys.executable, "-c",
-                                     "import sys; print(sys.stdout.isatty()); sys.stdout.flush()"])
+        session = terminal.Terminal(
+            [sys.executable, "-c", "import sys; print(sys.stdout.isatty()); sys.stdout.flush()"]
+        )
         self.addCleanup(session.close)
         self.assertIn(b"True", await self.drain(session))
 
@@ -36,8 +37,10 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"111", await self.drain(session))
 
     async def test_input_reaches_the_child(self):
-        code = ("import sys; line = sys.stdin.readline(); "
-                "sys.stdout.write('got:' + line.strip()); sys.stdout.flush()")
+        code = (
+            "import sys; line = sys.stdin.readline(); "
+            "sys.stdout.write('got:' + line.strip()); sys.stdout.flush()"
+        )
         session = terminal.Terminal([sys.executable, "-c", code])
         self.addCleanup(session.close)
         session.write(b"ping\n")

@@ -31,6 +31,7 @@ class LoginAndSessions(unittest.TestCase):
         self.assertEqual(login_page.background_bytes(), image.read_bytes())
         digest = hashlib.sha256(image.read_bytes()).hexdigest()
         self.assertIn(f"/_styx/login-background-landscape-1600-{digest}.webp", html)
+        self.assertEqual(login_page.background_etag(), f'"{digest}"')
         self.assertIn("<picture", html)
         self.assertIn('fetchpriority="high"', html)
         self.assertNotIn('rel="preload"', html)

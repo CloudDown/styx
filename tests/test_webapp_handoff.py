@@ -16,9 +16,11 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from styx.backend import gate, passwords, sessions, webapp_mode, webapp_handoff as handoff, tui_webapp  # noqa: E402
 from test_gate_regressions import Chunks, Transport  # noqa: E402
 from test_webapp_preload import LINKS, MANIFEST  # noqa: E402
+
+from styx.backend import gate, passwords, sessions, tui_webapp, webapp_mode  # noqa: E402
+from styx.backend import webapp_handoff as handoff
 
 TICKET = "t" * 43
 
@@ -27,7 +29,8 @@ class LaunchProtocol(unittest.TestCase):
     def test_public_cli_output_is_converted_without_exposing_credentials(self):
         result = handoff.parse_launch_output(
             "bundle ready\n  http://127.0.0.1:9120/webapp/launch#ticket=" + TICKET,
-            "127.0.0.1", 9120,
+            "127.0.0.1",
+            9120,
         )
         self.assertEqual(result, {"ticket": TICKET, "query": ""})
 
@@ -50,9 +53,13 @@ class LaunchProtocol(unittest.TestCase):
 
     def test_host_cli_is_no_open_skip_build_and_uses_no_credential_arguments(self):
         with patch.object(handoff, "hermes_argv", return_value=["hermes"]):
-            with patch.object(handoff.subprocess, "run", return_value=Mock(
-                returncode=0, stdout=f"http://127.0.0.1:9120/webapp/launch#ticket={TICKET}",
-            )) as run:
+            with patch.object(
+                handoff.subprocess,
+                "run",
+                return_value=Mock(
+                    returncode=0, stdout=f"http://127.0.0.1:9120/webapp/launch#ticket={TICKET}"
+                ),
+            ) as run:
                 handoff.request_launch("127.0.0.1", 9120)
         self.assertEqual(run.call_args.args[0], ["hermes", "webapp", "--no-open", "--skip-build"])
         self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
@@ -82,7 +89,9 @@ class EntryPasses(unittest.IsolatedAsyncioTestCase):
         flow = handoff.WebappHandoff("127.0.0.1", 9120)
         with patch.object(handoff, "time", types.SimpleNamespace(monotonic=lambda: now[0])):
             with patch.object(handoff, "_MAX_ENTRIES", 1):
-                with patch.object(handoff, "request_launch", return_value={"ticket": TICKET, "query": ""}):
+                with patch.object(
+                    handoff, "request_launch", return_value={"ticket": TICKET, "query": ""}
+                ):
                     first = await flow.launch("session", "")
                     with self.assertRaises(handoff.HandoffError):
                         await flow.launch("session", "")
@@ -93,14 +102,18 @@ class EntryPasses(unittest.IsolatedAsyncioTestCase):
 
     async def test_requested_navigation_and_native_profile_defaults_are_preserved(self):
         flow = handoff.WebappHandoff("127.0.0.1", 9120)
-        with patch.object(handoff, "request_launch", return_value={"ticket": TICKET, "query": "?profile=default"}):
+        with patch.object(
+            handoff, "request_launch", return_value={"ticket": TICKET, "query": "?profile=default"}
+        ):
             target = await flow.launch("session", "profile=other&session=chat&_styx_entry=old")
         fragment = parse_qs(urlsplit(target).fragment)
         query = parse_qs(fragment["query"][0])
         self.assertEqual(query["profile"], ["other"])
         self.assertEqual(query["session"], ["chat"])
         self.assertNotEqual(query[handoff.ENTRY_QUERY], ["old"])
-        self.assertEqual(handoff.strip_entry_query(fragment["query"][0]), "profile=other&session=chat")
+        self.assertEqual(
+            handoff.strip_entry_query(fragment["query"][0]), "profile=other&session=chat"
+        )
 
 
 class GateHandoff(unittest.IsolatedAsyncioTestCase):
@@ -113,18 +126,27 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.native_token = "n" * 43
         self.tickets = set()
         self.upstream_calls = []
-        self.issue = self.enterContext(patch.object(handoff, "request_launch", side_effect=self.issue_ticket))
+        self.issue = self.enterContext(
+            patch.object(handoff, "request_launch", side_effect=self.issue_ticket)
+        )
         self.enterContext(patch.object(gate, "_LOGIN_DELAY", 0))
         client_type = httpx.AsyncClient
-        with patch.object(gate.httpx, "AsyncClient", side_effect=lambda **kw: client_type(
-            transport=Transport(self.upstream), **kw,
-        )):
+        with patch.object(
+            gate.httpx,
+            "AsyncClient",
+            side_effect=lambda **kw: client_type(transport=Transport(self.upstream), **kw),
+        ):
             self.app = gate.build_app(
-                data_dir=self.root, upstream_host="127.0.0.1", upstream_port=9120,
-                secret=self.secret, webapp_handoff=True,
+                data_dir=self.root,
+                upstream_host="127.0.0.1",
+                upstream_port=9120,
+                secret=self.secret,
+                webapp_handoff=True,
             )
         await self.enterAsyncContext(self.app.router.lifespan_context(self.app))
-        self.browser = client_type(transport=httpx.ASGITransport(app=self.app), base_url="http://test.local")
+        self.browser = client_type(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://test.local"
+        )
         self.addAsyncCleanup(self.browser.aclose)
 
     def issue_ticket(self, host, port):
@@ -153,7 +175,9 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
                 status, body = 403, b'{"detail":"expired"}'
         elif request.url.path == "/api/profiles":
             headers = {"content-type": "application/json"}
-            status = 200 if request.headers.get("X-Hermes-Session-Token") == self.native_token else 401
+            status = (
+                200 if request.headers.get("X-Hermes-Session-Token") == self.native_token else 401
+            )
             body = b'{"profiles":[]}'
         else:
             self.assertNotIn(handoff.ENTRY_QUERY, request.url.params)
@@ -163,8 +187,9 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
     async def login(self, *, next_path="/api/profiles", expected_status=303):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
-        response = await self.browser.post("/login", params={"next": next_path},
-                                           data={"csrf": csrf, "password": "test-password"})
+        response = await self.browser.post(
+            "/login", params={"next": next_path}, data={"csrf": csrf, "password": "test-password"}
+        )
         self.assertEqual(response.status_code, expected_status)
         return response
 
@@ -177,9 +202,9 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         fragment = parse_qs(link.fragment)
         native_page = await self.browser.get(link.path)
         self.assertEqual(native_page.status_code, 200)
-        exchange = await self.browser.post("/webapp/window-session", headers={
-            "X-Hermes-Window-Ticket": fragment["ticket"][0],
-        })
+        exchange = await self.browser.post(
+            "/webapp/window-session", headers={"X-Hermes-Window-Ticket": fragment["ticket"][0]}
+        )
         self.assertEqual(exchange.status_code, 200)
         entry_url = "/?" + fragment["query"][0]
         workspace = await self.browser.get(entry_url)
@@ -201,15 +226,17 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(native.content, b"native launch page")
         self.assertNotIn("link", native.headers)
         fragment = parse_qs(launch.fragment)
-        exchange = await self.browser.post("/webapp/window-session", headers={
-            "X-Hermes-Window-Ticket": fragment["ticket"][0],
-        })
+        exchange = await self.browser.post(
+            "/webapp/window-session", headers={"X-Hermes-Window-Ticket": fragment["ticket"][0]}
+        )
         self.assertEqual(exchange.status_code, 200)
         self.assertNotIn("link", exchange.headers)
         workspace = await self.browser.get("/?" + fragment["query"][0])
         self.assertEqual(workspace.content, b"<html>Hermes workspace</html>")
         self.assertEqual(workspace.headers.get_list("link"), list(LINKS))
-        self.assertEqual(sum(r.url.path == "/renderer-manifest.json" for r in self.upstream_calls), 1)
+        self.assertEqual(
+            sum(r.url.path == "/renderer-manifest.json" for r in self.upstream_calls), 1
+        )
 
     async def test_tui_mode_serves_a_terminal_and_keeps_the_official_webapp_reachable(self):
         await self.login()
@@ -223,7 +250,9 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(shell.headers["referrer-policy"], "no-referrer")
         self.assertIn(tui_webapp.TUI + "/xterm.js", shell.text)
         for name in ("xterm.js", "addon-fit.js", "xterm.css"):
-            asset = await self.browser.get(f"{tui_webapp.TUI}/{name}", headers={"Accept-Encoding": "gzip"})
+            asset = await self.browser.get(
+                f"{tui_webapp.TUI}/{name}", headers={"Accept-Encoding": "gzip"}
+            )
             self.assertEqual(asset.status_code, 200, name)
             self.assertIn("immutable", asset.headers["cache-control"])
         # The terminal runs on this host: serving it never reaches upstream.
@@ -260,16 +289,18 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         token, entry = await self.complete(response)
         self.assertEqual(parse_qs(urlsplit(entry).query)["profile"], ["other"])
         self.assertEqual(parse_qs(urlsplit(entry).query)["session"], ["chat"])
-        response = await self.browser.get("/api/profiles", headers={"X-Hermes-Session-Token": token})
+        response = await self.browser.get(
+            "/api/profiles", headers={"X-Hermes-Session-Token": token}
+        )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.issue.call_count, 1)
         self.assertNotIn("styx_session", self.upstream_calls[-1].headers.get("Cookie", ""))
 
     async def test_login_failure_does_not_request_a_native_ticket(self):
         await self.browser.get("/login")
-        response = await self.browser.post("/login", data={
-            "csrf": self.browser.cookies[sessions.CSRF_COOKIE], "password": "wrong",
-        })
+        response = await self.browser.post(
+            "/login", data={"csrf": self.browser.cookies[sessions.CSRF_COOKIE], "password": "wrong"}
+        )
         self.assertEqual(response.status_code, 401)
         self.issue.assert_not_called()
 
@@ -277,6 +308,7 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
         def changed(host, port):
             passwords.write_hash(self.root / "passwd", "replacement")
             return {"ticket": TICKET, "query": ""}
+
         self.issue.side_effect = changed
         response = await self.login(next_path="/", expected_status=401)
         self.assertEqual(response.status_code, 401)
@@ -304,7 +336,9 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
 
     async def test_two_tabs_have_distinct_entry_passes_without_cookie_races(self):
         await self.login()
-        responses = await asyncio.gather(self.browser.get("/?tab=one"), self.browser.get("/?tab=two"))
+        responses = await asyncio.gather(
+            self.browser.get("/?tab=one"), self.browser.get("/?tab=two")
+        )
         first, second = await self.complete(responses[0]), await self.complete(responses[1])
         self.assertNotEqual(first[1], second[1])
         self.assertEqual(self.issue.call_count, 2)
@@ -325,9 +359,11 @@ class GateHandoff(unittest.IsolatedAsyncioTestCase):
 
     async def test_password_change_during_launch_does_not_disclose_the_ticket(self):
         await self.login()
+
         def changed(host, port):
             passwords.write_hash(self.root / "passwd", "replacement")
             return {"ticket": TICKET, "query": ""}
+
         self.issue.side_effect = changed
         response = await self.browser.get("/")
         self.assertEqual(response.headers["location"], "/login")

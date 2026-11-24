@@ -5,8 +5,8 @@ Run with a Python environment containing Pillow and the plugin dependencies:
 No image processing or Pillow dependency is needed by the installed gate.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from PIL import Image, ImageOps
 

@@ -52,17 +52,23 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         passwords.write_hash(self.root / "passwd", "old-password")
         self.handler = lambda request: httpx.Response(200, stream=Chunks(b"ok"))
         client_type = httpx.AsyncClient
+
         def make_client(**kwargs):
-            self.upstream = client_type(transport=Transport(lambda req: self.handler(req)), **kwargs)
+            self.upstream = client_type(
+                transport=Transport(lambda req: self.handler(req)), **kwargs
+            )
             return self.upstream
+
         with patch.object(gate.httpx, "AsyncClient", side_effect=make_client):
             self.app = gate.build_app(
-                data_dir=self.root, upstream_host="127.0.0.1",
-                upstream_port=9120, secret=self.secret,
+                data_dir=self.root,
+                upstream_host="127.0.0.1",
+                upstream_port=9120,
+                secret=self.secret,
             )
         await self.enterAsyncContext(self.app.router.lifespan_context(self.app))
         self.browser = client_type(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://test.local",
+            transport=httpx.ASGITransport(app=self.app), base_url="http://test.local"
         )
         self.addAsyncCleanup(self.browser.aclose)
 
@@ -76,39 +82,40 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
         await self.browser.get("/login?next=/favicon.ico")
         self.assertEqual(self.browser.cookies[sessions.CSRF_COOKIE], csrf)
-        response = await self.browser.post("/login", data={"csrf": csrf, "password": "old-password"})
+        response = await self.browser.post(
+            "/login", data={"csrf": csrf, "password": "old-password"}
+        )
         self.assertEqual(response.status_code, 303)
 
     async def test_login_preserves_an_internal_next_page(self):
         page = await self.browser.get("/login", params={"next": "/api/profiles?tab=1"})
         self.assertIn('name="next" value="/api/profiles?tab=1"', page.text)
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
-        response = await self.browser.post("/login", data={
-            "csrf": csrf, "password": "old-password", "next": "/api/profiles?tab=1",
-        })
+        response = await self.browser.post(
+            "/login", data={"csrf": csrf, "password": "old-password", "next": "/api/profiles?tab=1"}
+        )
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/api/profiles?tab=1")
 
     async def test_login_drops_external_malformed_or_oversized_next_pages(self):
-        for bad in ("https://evil.example/x", "//evil.example/x", "/\\evil.example/x",
-                    "/x" * 2000):
+        for bad in ("https://evil.example/x", "//evil.example/x", "/\\evil.example/x", "/x" * 2000):
             with self.subTest(next_page=bad[:32]):
                 self.browser.cookies.clear()
                 page = await self.browser.get("/login", params={"next": bad})
                 self.assertNotIn("evil.example", page.text)
                 csrf = self.browser.cookies[sessions.CSRF_COOKIE]
-                response = await self.browser.post("/login", data={
-                    "csrf": csrf, "password": "old-password", "next": bad,
-                })
+                response = await self.browser.post(
+                    "/login", data={"csrf": csrf, "password": "old-password", "next": bad}
+                )
                 self.assertEqual(response.status_code, 303)
                 self.assertEqual(response.headers["location"], "/")
 
     async def test_failed_login_keeps_the_requested_page(self):
         await self.browser.get("/login", params={"next": "/api/profiles"})
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
-        response = await self.browser.post("/login", data={
-            "csrf": csrf, "password": "wrong-password", "next": "/api/profiles",
-        })
+        response = await self.browser.post(
+            "/login", data={"csrf": csrf, "password": "wrong-password", "next": "/api/profiles"}
+        )
         self.assertEqual(response.status_code, 401)
         self.assertIn('name="next" value="/api/profiles"', response.text)
 
@@ -125,15 +132,21 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         content = gzip.compress(b"uncompressed")
         body = Chunks(content)
         self.handler = lambda req: httpx.Response(
-            200, headers=[
-                ("content-encoding", "gzip"), ("content-length", str(len(content))),
-                ("set-cookie", "one=1; Path=/"), ("set-cookie", "two=2; Path=/"),
-            ], stream=body,
+            200,
+            headers=[
+                ("content-encoding", "gzip"),
+                ("content-length", str(len(content))),
+                ("set-cookie", "one=1; Path=/"),
+                ("set-cookie", "two=2; Path=/"),
+            ],
+            stream=body,
         )
         response = await self.browser.get("/")
         self.assertEqual(response.headers.get("content-encoding"), "gzip")
         self.assertEqual(response.content, b"uncompressed")
-        self.assertEqual(response.headers.get_list("set-cookie"), ["one=1; Path=/", "two=2; Path=/"])
+        self.assertEqual(
+            response.headers.get_list("set-cookie"), ["one=1; Path=/", "two=2; Path=/"]
+        )
         self.assertTrue(body.closed)
 
     async def test_login_compression_preserves_the_exact_page_and_csrf(self):
@@ -169,8 +182,11 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(head.content, b"")
         self.assertEqual(int(head.headers["content-length"]), len(response.content))
         # No directory, arbitrary image or upstream asset becomes public.
-        for path in ("/_styx/login-background-wrong.jpg", "/assets/login-background.jpg",
-                     "/_styx/../passwd"):
+        for path in (
+            "/_styx/login-background-wrong.jpg",
+            "/assets/login-background.jpg",
+            "/_styx/../passwd",
+        ):
             self.assertEqual((await self.browser.get(path)).status_code, 303)
         login = await self.browser.get("/login")
         self.assertEqual(login.headers["cache-control"], "no-store")
@@ -188,18 +204,24 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
             wrong = url.replace(variant, "portrait-99999", 1)
             self.assertEqual((await self.browser.get(wrong)).status_code, 303)
         self.assertEqual((await self.browser.post(url, content=b"x")).status_code, 303)
-        self.assertEqual((await self.browser.get("/assets/login/portrait-480.webp")).status_code, 303)
+        self.assertEqual(
+            (await self.browser.get("/assets/login/portrait-480.webp")).status_code, 303
+        )
 
     async def test_valid_login_does_not_wait_for_the_failure_backoff(self):
-        with patch.object(gate, "_LOGIN_DELAY", 0.4), \
-                patch.object(gate.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+        with (
+            patch.object(gate, "_LOGIN_DELAY", 0.4),
+            patch.object(gate.asyncio, "sleep", new_callable=AsyncMock) as sleep,
+        ):
             response = await self.login()
         self.assertEqual(response.status_code, 303)
         sleep.assert_not_awaited()
 
     async def test_invalid_logins_keep_the_full_progressive_backoff(self):
-        with patch.object(gate, "_LOGIN_DELAY", 0.4), \
-                patch.object(gate.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+        with (
+            patch.object(gate, "_LOGIN_DELAY", 0.4),
+            patch.object(gate.asyncio, "sleep", new_callable=AsyncMock) as sleep,
+        ):
             self.assertEqual((await self.login("wrong")).status_code, 401)
             self.assertEqual((await self.login("wrong")).status_code, 401)
             # A legitimate login after failures still has no artificial wait.
@@ -219,17 +241,20 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
                 all_waiting.set()
             await release.wait()
 
-        with patch.object(passwords, "verify_password", return_value=False), \
-                patch.object(gate.asyncio, "sleep", side_effect=backoff):
+        with (
+            patch.object(passwords, "verify_password", return_value=False),
+            patch.object(gate.asyncio, "sleep", side_effect=backoff),
+        ):
             requests = [
-                asyncio.create_task(self.browser.post(
-                    "/login", data={"csrf": csrf, "password": "wrong"},
-                )) for _ in range(gate._FAIL_MAX)
+                asyncio.create_task(
+                    self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
+                )
+                for _ in range(gate._FAIL_MAX)
             ]
             try:
                 await asyncio.wait_for(all_waiting.wait(), timeout=3)
                 blocked = await self.browser.post(
-                    "/login", data={"csrf": csrf, "password": "old-password"},
+                    "/login", data={"csrf": csrf, "password": "old-password"}
                 )
                 self.assertEqual(blocked.status_code, 429)
             finally:
@@ -241,12 +266,19 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         await self.login()
         content = b"const hello = 'unchanged';\n" * 1000
         body = Chunks(content[:5000], content[5000:])
-        self.handler = lambda req: httpx.Response(200, headers={
-            "content-type": "text/javascript", "content-length": str(len(content)),
-            "cache-control": "public, max-age=31536000, immutable", "etag": '"v1"',
-        }, stream=body)
-        async with self.browser.stream("GET", "/assets/main-123abcXY.js",
-                                       headers={"accept-encoding": "gzip"}) as response:
+        self.handler = lambda req: httpx.Response(
+            200,
+            headers={
+                "content-type": "text/javascript",
+                "content-length": str(len(content)),
+                "cache-control": "public, max-age=31536000, immutable",
+                "etag": '"v1"',
+            },
+            stream=body,
+        )
+        async with self.browser.stream(
+            "GET", "/assets/main-123abcXY.js", headers={"accept-encoding": "gzip"}
+        ) as response:
             encoded = b"".join([chunk async for chunk in response.aiter_raw()])
         self.assertEqual(gzip.decompress(encoded), content)
         self.assertLess(len(encoded), len(content) // 10)
@@ -261,10 +293,15 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 303)
         await self.login()
         content = b"private" * 1000
-        self.handler = lambda req: httpx.Response(200, headers={
-            "content-type": "application/json", "content-length": str(len(content)),
-            "cache-control": "no-store",
-        }, stream=Chunks(content))
+        self.handler = lambda req: httpx.Response(
+            200,
+            headers={
+                "content-type": "application/json",
+                "content-length": str(len(content)),
+                "cache-control": "no-store",
+            },
+            stream=Chunks(content),
+        )
         response = await self.browser.get("/api/profiles")
         self.assertNotIn("content-encoding", response.headers)
         self.assertEqual(response.content, content)
@@ -274,27 +311,37 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         await self.login()
         content = gzip.compress(b"static body" * 1000)
         body = Chunks(content)
-        self.handler = lambda req: httpx.Response(200, headers=[
-            ("content-type", "text/javascript"), ("content-encoding", "gzip"),
-            ("content-length", str(len(content))),
-            ("cache-control", "public, max-age=31536000, immutable"),
-            ("set-cookie", "one=1; Path=/"), ("set-cookie", "two=2; Path=/"),
-        ], stream=body)
+        self.handler = lambda req: httpx.Response(
+            200,
+            headers=[
+                ("content-type", "text/javascript"),
+                ("content-encoding", "gzip"),
+                ("content-length", str(len(content))),
+                ("cache-control", "public, max-age=31536000, immutable"),
+                ("set-cookie", "one=1; Path=/"),
+                ("set-cookie", "two=2; Path=/"),
+            ],
+            stream=body,
+        )
         async with self.browser.stream("GET", "/assets/main-123abcXY.js") as response:
             encoded = b"".join([chunk async for chunk in response.aiter_raw()])
         self.assertEqual(encoded, content)
         self.assertEqual(response.headers["content-length"], str(len(content)))
-        self.assertEqual(response.headers.get_list("set-cookie"), ["one=1; Path=/", "two=2; Path=/"])
+        self.assertEqual(
+            response.headers.get_list("set-cookie"), ["one=1; Path=/", "two=2; Path=/"]
+        )
         self.assertTrue(body.closed)
 
     async def test_concurrent_attempts_cannot_bypass_global_limit(self):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
         with patch.object(passwords, "verify_password", return_value=False) as verify:
-            responses = await asyncio.gather(*(
-                self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
-                for _ in range(12)
-            ))
+            responses = await asyncio.gather(
+                *(
+                    self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
+                    for _ in range(12)
+                )
+            )
         self.assertEqual(verify.call_count, 8)
         self.assertEqual(sum(r.status_code == 429 for r in responses), 4)
 
@@ -311,6 +358,7 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         async def chunks():
             for _ in range(32):
                 yield b"x" * 1024
+
         with patch.object(passwords, "verify_password") as verify:
             response = await self.browser.post("/login", content=chunks())
         self.assertEqual(response.status_code, 413)
@@ -343,9 +391,11 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
         loop_thread = threading.get_ident()
+
         def verify(password, stored):
             self.assertNotEqual(threading.get_ident(), loop_thread)
             return False
+
         with patch.object(passwords, "verify_password", side_effect=verify):
             response = await self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
         self.assertEqual(response.status_code, 401)
@@ -355,6 +405,7 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         async def chunks():
             await asyncio.sleep(0.1)
             yield b"password=x"
+
         with patch.object(gate, "_LOGIN_TIMEOUT", 0.01):
             response = await self.browser.post("/login", content=chunks())
         self.assertEqual(response.status_code, 408)
@@ -362,27 +413,34 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
     async def test_password_change_during_verification_does_not_issue_token(self):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+
         def replace_password(password, stored):
             passwords.write_hash(self.root / "passwd", "changed-during-login")
             return True
+
         with patch.object(passwords, "verify_password", side_effect=replace_password):
-            response = await self.browser.post("/login", data={"csrf": csrf, "password": "old-password"})
+            response = await self.browser.post(
+                "/login", data={"csrf": csrf, "password": "old-password"}
+            )
         self.assertEqual(response.status_code, 401)
         self.assertNotIn(sessions.COOKIE, self.browser.cookies)
 
     async def test_proxy_does_not_share_upstream_cookies_between_browsers(self):
         self.assertEqual((await self.login()).status_code, 303)
         received = []
+
         def handler(request):
             received.append(request.headers.get("cookie", ""))
             return httpx.Response(
-                200, headers={"set-cookie": "private=browser-one; Path=/"}, stream=Chunks(b"ok"),
+                200, headers={"set-cookie": "private=browser-one; Path=/"}, stream=Chunks(b"ok")
             )
+
         self.handler = handler
         await self.browser.get("/")
         self.assertEqual(self.browser.cookies["private"], "browser-one")
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://test.local",
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="http://test.local",
             cookies={sessions.COOKIE: self.browser.cookies[sessions.COOKIE]},
         ) as other:
             await other.get("/")
@@ -393,14 +451,16 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
         entered, release = threading.Event(), threading.Event()
+
         def verify(password, stored):
             entered.set()
             release.wait(timeout=3)
             return False
+
         with patch.object(passwords, "verify_password", side_effect=verify):
-            request = asyncio.create_task(self.browser.post(
-                "/login", data={"csrf": csrf, "password": "wrong"},
-            ))
+            request = asyncio.create_task(
+                self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
+            )
             try:
                 self.assertTrue(await asyncio.to_thread(entered.wait, 1))
                 request.cancel()
@@ -436,7 +496,9 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(passwords, "verify_password", side_effect=verify):
             requests = [
-                asyncio.create_task(self.browser.post("/login", data={"csrf": csrf, "password": "wrong"}))
+                asyncio.create_task(
+                    self.browser.post("/login", data={"csrf": csrf, "password": "wrong"})
+                )
                 for _ in range(8)
             ]
             try:
@@ -453,23 +515,37 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         body = Chunks(b"unread")
         self.handler = lambda req: httpx.Response(200, stream=body)
         scope = {
-            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
-            "http_version": "1.1", "method": "GET", "scheme": "http",
-            "path": "/", "raw_path": b"/", "query_string": b"",
-            "headers": [(b"host", b"test.local"), (b"cookie", f"styx_session={self.browser.cookies[sessions.COOKIE]}".encode())],
-            "client": ("127.0.0.1", 12345), "server": ("test.local", 80),
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"test.local"),
+                (b"cookie", f"styx_session={self.browser.cookies[sessions.COOKIE]}".encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("test.local", 80),
         }
+
         async def receive():
             return {"type": "http.request", "body": b"", "more_body": False}
+
         async def send(message):
             raise OSError("client gone")
+
         with self.assertRaises(ClientDisconnect):
             await self.app(scope, receive, send)
         self.assertTrue(body.closed)
 
     async def test_refuses_non_loopback_upstream(self):
         with self.assertRaisesRegex(RuntimeError, "non-loopback"):
-            gate.build_app(data_dir=self.root, upstream_host="0.0.0.0", upstream_port=9120, secret=self.secret)
+            gate.build_app(
+                data_dir=self.root, upstream_host="0.0.0.0", upstream_port=9120, secret=self.secret
+            )
 
 
 class LoginLimiter(unittest.TestCase):

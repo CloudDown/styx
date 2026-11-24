@@ -36,6 +36,7 @@ Tor Browser → http://<v3>.onion
 | `backend/webapp_handoff.py` | public CLI one-use native browser launch, only after Cerberus authentication |
 | `backend/webapp_mode.py` | preference for the official Webapp or TUI |
 | `backend/webapp_preload.py` | optional HTTP preload hints from the official renderer manifest, no HTML rewriting |
+| `backend/offload.py` | bounded worker-thread offload; cancellation waits for the thread before freeing the slot |
 | `backend/tui_webapp.py`, `assets/tui/` | opt-in terminal page; vendored xterm.js, no external assets |
 | `backend/terminal.py` | POSIX PTY running the fixed `hermes --tui`; never a client-chosen command |
 | `backend/headers.py` | strip styx_* cookies; force Host/Origin to `127.0.0.1:<port>` |
@@ -69,9 +70,12 @@ hermes plugins doctor ~/projet/styx --ci
 hermes --run-module unittest discover -s ~/projet/styx/tests -v
 python3 -m unittest discover -s tests -v   # from ~/projet with PYTHONPATH=~/projet
 # or: cd ~/projet && python3 -m unittest discover -s styx/tests -v
+uvx ruff check
+uvx ruff format --check
 ```
 
-No pytest in the Hermes venv — use stdlib `unittest`.
+No pytest in the Hermes venv — use stdlib `unittest`. `ruff.toml` owns formatting and lint
+rules (line length 100, py311 target); keep both checks green.
 
 ## Invariants
 

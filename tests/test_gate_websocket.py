@@ -38,12 +38,12 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.closed.set()
 
-        server = await self.enterAsyncContext(websockets.serve(
-            handler, "127.0.0.1", 0, subprotocols=self.protocols,
-        ))
+        server = await self.enterAsyncContext(
+            websockets.serve(handler, "127.0.0.1", 0, subprotocols=self.protocols)
+        )
         port = server.sockets[0].getsockname()[1]
         app = gate.build_app(
-            data_dir=self.root, upstream_host="127.0.0.1", upstream_port=port, secret=self.secret,
+            data_dir=self.root, upstream_host="127.0.0.1", upstream_port=port, secret=self.secret
         )
         await self.enterAsyncContext(app.router.lifespan_context(app))
         if token is None:
@@ -52,8 +52,10 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
         self.incoming = asyncio.Queue()
         self.outgoing = asyncio.Queue()
         headers = [
-            (b"host", b"test.local"), (b"origin", b"http://test.local"),
-            (b"connection", b"upgrade"), (b"upgrade", b"websocket"),
+            (b"host", b"test.local"),
+            (b"origin", b"http://test.local"),
+            (b"connection", b"upgrade"),
+            (b"upgrade", b"websocket"),
             (b"sec-websocket-key", b"dGhlIHNhbXBsZSBub25jZQ=="),
             (b"sec-websocket-version", b"13"),
             (b"cookie", f"styx_session={token}; hermes=kept".encode()),
@@ -61,10 +63,16 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
         if protocols:
             headers.append((b"sec-websocket-protocol", b"echo, unused"))
         scope = {
-            "type": "websocket", "asgi": {"version": "3.0", "spec_version": "2.5"},
-            "scheme": "ws", "path": "/echo", "raw_path": b"/echo", "query_string": b"",
-            "headers": headers, "subprotocols": ["echo", "unused"] if protocols else [],
-            "client": ("127.0.0.1", 12345), "server": ("test.local", 80),
+            "type": "websocket",
+            "asgi": {"version": "3.0", "spec_version": "2.5"},
+            "scheme": "ws",
+            "path": "/echo",
+            "raw_path": b"/echo",
+            "query_string": b"",
+            "headers": headers,
+            "subprotocols": ["echo", "unused"] if protocols else [],
+            "client": ("127.0.0.1", 12345),
+            "server": ("test.local", 80),
         }
         await self.incoming.put({"type": "websocket.connect"})
         self.task = asyncio.create_task(app(scope, self.incoming.get, self.outgoing.put))

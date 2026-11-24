@@ -16,8 +16,10 @@ import re
 import sys
 import time
 from collections import deque
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from http.cookiejar import CookieJar, DefaultCookiePolicy
+from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import httpx
@@ -26,18 +28,14 @@ from starlette.applications import Starlette
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
+from starlette.types import Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from . import headers as hdrs
-from . import webapp_mode
-from . import login_page
-from . import passwords
-from . import paths
-from . import sessions
-from . import terminal
-from . import tui_webapp
+from . import login_page, passwords, paths, sessions, terminal, tui_webapp, webapp_mode
 from .asset_transfer import accepts_gzip, asset_encoding, compressed_stream, encoding_headers
 from .network import require_loopback
+from .offload import run_in_thread
 from .webapp_handoff import ENTRY_QUERY, HandoffError, WebappHandoff, strip_entry_query
 from .webapp_preload import WebappPreload
 
@@ -66,7 +64,7 @@ def _safe_next(raw: str | None) -> str:
 class _LoginLimiter:
     """One global budget per gate, including attempts currently in flight."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.fails: deque[float] = deque()
         self.pending = 0
 
@@ -89,12 +87,21 @@ class _LoginLimiter:
 class _ProxyResponse(StreamingResponse):
     """Close the upstream even if sending headers fails before iteration starts."""
 
-    def __init__(self, upstream: httpx.Response, *, encoding: str | None = None,
-                 gzip_level: int = 1, links: tuple[str, ...] = ()):
+    def __init__(
+        self,
+        upstream: httpx.Response,
+        *,
+        encoding: str | None = None,
+        gzip_level: int = 1,
+        links: tuple[str, ...] = (),
+    ) -> None:
         self.upstream = upstream
-        super().__init__(compressed_stream(upstream, encoding, gzip_level=gzip_level)
-                         if encoding else upstream.aiter_raw(),
-                         status_code=upstream.status_code)
+        super().__init__(
+            compressed_stream(upstream, encoding, gzip_level=gzip_level)
+            if encoding
+            else upstream.aiter_raw(),
+            status_code=upstream.status_code,
+        )
         headers = httpx.Headers(upstream.headers.raw, encoding="latin-1")
         self.raw_headers = [
             (key.lower().encode("latin-1"), value.encode("latin-1"))
@@ -104,15 +111,21 @@ class _ProxyResponse(StreamingResponse):
             self.raw_headers = encoding_headers(self.raw_headers, encoding)
         self.raw_headers.extend((b"link", link.encode("ascii")) for link in links)
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
             await self.upstream.aclose()
 
 
-def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes,
-              webapp_handoff: bool = False) -> Starlette:
+def build_app(
+    *,
+    data_dir: Path,
+    upstream_host: str,
+    upstream_port: int,
+    secret: bytes,
+    webapp_handoff: bool = False,
+) -> Starlette:
     require_loopback(upstream_host)
     passwd_file = paths.passwd_path(data_dir)
     if not passwords.read_hash(passwd_file):
@@ -126,7 +139,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         # A proxy must not carry upstream cookies between browser sessions.
         cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
     )
-    upstream_base = str(httpx.URL(scheme="http", host=upstream_host, port=upstream_port)).rstrip("/")
+    upstream_base = str(httpx.URL(scheme="http", host=upstream_host, port=upstream_port)).rstrip(
+        "/"
+    )
     limiter = _LoginLimiter()
     hash_slots = asyncio.Semaphore(2)
     render_slots = asyncio.Semaphore(2)
@@ -140,31 +155,39 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         stored = passwords.read_hash(passwd_file)
         return sessions.password_key(secret, stored) if stored else None
 
-    def authed(connection) -> bool:
+    def authed(connection: Request | WebSocket) -> bool:
         key = auth_key()
         return key is not None and sessions.valid(key, connection.cookies.get(sessions.COOKIE))
 
-    async def login_response(request: Request, error: str = "", status_code: int = 200, *,
-                             csrf: str | None = None, next_path: str = "/") -> Response:
+    async def watch_session(connection: WebSocket) -> None:
+        """Close a long-lived socket within one second of a password change."""
+        while authed(connection):
+            await asyncio.sleep(_SESSION_CHECK_INTERVAL)
+        await connection.close(code=4401)
+
+    async def cancel_tasks(tasks: list[asyncio.Task[None]]) -> None:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def login_response(
+        request: Request,
+        error: str = "",
+        status_code: int = 200,
+        *,
+        csrf: str | None = None,
+        next_path: str = "/",
+    ) -> Response:
         csrf = csrf or sessions.new_csrf()
         compressed = accepts_gzip(request.headers.get("accept-encoding", ""))
-        def render():
+
+        def render() -> bytes:
             body = login_page.render(error=error, csrf=csrf, next_path=next_path).encode("utf-8")
             # The form is tiny; the public painting has its own immutable URL.
             return gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
+
         async with render_slots:
-            work = asyncio.create_task(asyncio.to_thread(render))
-            cancelled = False
-            while True:
-                try:
-                    body = await asyncio.shield(work)
-                    break
-                except asyncio.CancelledError:
-                    if work.cancelled():
-                        raise
-                    cancelled = True
-            if cancelled:
-                raise asyncio.CancelledError
+            body = await run_in_thread(render)
         resp = HTMLResponse(body, status_code=status_code)
         resp.headers["Vary"] = "Accept-Encoding"
         if compressed:
@@ -172,15 +195,14 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Referrer-Policy"] = "no-referrer"
         resp.set_cookie(
-            sessions.CSRF_COOKIE, csrf, httponly=True, samesite="lax",
-            max_age=600, path="/login",
+            sessions.CSRF_COOKIE, csrf, httponly=True, samesite="lax", max_age=600, path="/login"
         )
         return resp
 
     async def login_background(request: Request) -> Response:
         variant = login_backgrounds[request.url.path]
         image = login_page.background_bytes(variant)
-        etag = '"' + login_page.background_url(variant).rsplit("-", 1)[1].removesuffix(".webp") + '"'
+        etag = login_page.background_etag(variant)
         headers = {
             "Cache-Control": "public, max-age=31536000, immutable",
             "ETag": etag,
@@ -193,21 +215,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
 
     async def verify(password: str, stored: str) -> bool:
         async with hash_slots:
-            work = asyncio.create_task(asyncio.to_thread(passwords.verify_password, password, stored))
-            cancelled = False
-            while True:
-                try:
-                    result = await asyncio.shield(work)
-                    break
-                except asyncio.CancelledError:
-                    if work.cancelled():
-                        raise
-                    # Even repeated cancellation must not release capacity
-                    # while the non-cancellable scrypt thread is still running.
-                    cancelled = True
-            if cancelled:
-                raise asyncio.CancelledError
-            return result
+            return await run_in_thread(passwords.verify_password, password, stored)
 
     async def login_get(request: Request) -> Response:
         if authed(request):
@@ -217,7 +225,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if not re.fullmatch(r"[A-Za-z0-9_-]{32}", csrf):
             csrf = None
         return await login_response(
-            request, csrf=csrf, next_path=_safe_next(request.query_params.get("next")),
+            request, csrf=csrf, next_path=_safe_next(request.query_params.get("next"))
         )
 
     async def login_post(request: Request) -> Response:
@@ -225,7 +233,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         delay = limiter.reserve()
         if delay is None:
             resp = await login_response(
-                request, "Too many attempts. Try again later.", 429, next_path=next_path,
+                request, "Too many attempts. Try again later.", 429, next_path=next_path
             )
             resp.headers["Retry-After"] = str(_FAIL_WINDOW)
             return resp
@@ -237,25 +245,27 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                     async for chunk in request.stream():
                         if len(body) + len(chunk) > _LOGIN_MAX_BYTES:
                             return await login_response(
-                                request, "Form submission is too large.", 413, next_path=next_path,
+                                request, "Form submission is too large.", 413, next_path=next_path
                             )
                         body.extend(chunk)
-                form = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=8)
+                form = parse_qs(
+                    body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=8
+                )
                 # The hidden field is authoritative once the form parsed.
                 next_path = _safe_next(form.get("next", [next_path])[0])
             except TimeoutError:
                 return await login_response(
-                    request, "Form submission timed out.", 408, next_path=next_path,
+                    request, "Form submission timed out.", 408, next_path=next_path
                 )
             except ValueError:
                 return await login_response(
-                    request, "Invalid form submission.", 400, next_path=next_path,
+                    request, "Invalid form submission.", 400, next_path=next_path
                 )
             csrf_form = form.get("csrf", [""])[0]
             csrf_cookie = request.cookies.get(sessions.CSRF_COOKIE) or ""
             password = form.get("password", [""])[0]
             ok_csrf = bool(csrf_form) and hmac.compare_digest(
-                csrf_form.encode("utf-8"), csrf_cookie.encode("utf-8"),
+                csrf_form.encode("utf-8"), csrf_cookie.encode("utf-8")
             )
             stored = passwords.read_hash(passwd_file)
             if not ok_csrf or not stored or not await verify(password, stored):
@@ -263,14 +273,12 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 # without slowing down a successfully authenticated user.
                 await asyncio.sleep(delay)
                 return await login_response(
-                    request, "Incorrect password.", 401, next_path=next_path,
+                    request, "Incorrect password.", 401, next_path=next_path
                 )
             # Reject a login whose password was replaced during verification.
             if passwords.read_hash(passwd_file) != stored:
                 await asyncio.sleep(delay)
-                return await login_response(
-                    request, "Please try again.", 401, next_path=next_path,
-                )
+                return await login_response(request, "Please try again.", 401, next_path=next_path)
             token = sessions.issue(sessions.password_key(secret, stored))
             success = True
         finally:
@@ -293,17 +301,21 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             except HandoffError as exc:
                 resp = HTMLResponse(str(exc), status_code=503)
             if passwords.read_hash(passwd_file) != stored:
-                return await login_response(
-                    request, "Please try again.", 401, next_path=next_path,
-                )
-            resp.headers["Server-Timing"] = f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}"
+                return await login_response(request, "Please try again.", 401, next_path=next_path)
+            resp.headers["Server-Timing"] = (
+                f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}"
+            )
         else:
             resp = RedirectResponse(nxt, status_code=303)
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Referrer-Policy"] = "no-referrer"
         resp.set_cookie(
-            sessions.COOKIE, token, httponly=True, samesite="lax",
-            max_age=sessions.TTL_SECONDS, path="/",
+            sessions.COOKIE,
+            token,
+            httponly=True,
+            samesite="lax",
+            max_age=sessions.TTL_SECONDS,
+            path="/",
         )
         resp.delete_cookie(sessions.CSRF_COOKIE, path="/login")
         return resp
@@ -315,18 +327,23 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
 
     async def tui_shell(request: Request) -> Response:
         if not authed(request):
-            return RedirectResponse("/login?" + urlencode({"next": tui_webapp.TUI}),
-                                    status_code=303, headers=_NO_STORE)
-        return tui_webapp.response(request.headers.get("accept-encoding", ""),
-                                   request.headers.get("if-none-match", ""))
+            return RedirectResponse(
+                "/login?" + urlencode({"next": tui_webapp.TUI}), status_code=303, headers=_NO_STORE
+            )
+        return tui_webapp.response(
+            request.headers.get("accept-encoding", ""), request.headers.get("if-none-match", "")
+        )
 
     async def tui_asset(request: Request) -> Response:
         if not authed(request):
-            return RedirectResponse("/login?" + urlencode({"next": tui_webapp.TUI}),
-                                    status_code=303, headers=_NO_STORE)
-        return tui_webapp.asset(request.path_params["asset"],
-                                request.headers.get("accept-encoding", ""),
-                                request.headers.get("if-none-match", ""))
+            return RedirectResponse(
+                "/login?" + urlencode({"next": tui_webapp.TUI}), status_code=303, headers=_NO_STORE
+            )
+        return tui_webapp.asset(
+            request.path_params["asset"],
+            request.headers.get("accept-encoding", ""),
+            request.headers.get("if-none-match", ""),
+        )
 
     async def tui_socket(websocket: WebSocket) -> None:
         """One fixed command in a real PTY. Nothing here is client-chosen."""
@@ -336,8 +353,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         argv = terminal.command()
         await websocket.accept()
         if argv is None or os.name != "posix":
-            reason = ("The hermes launcher is not on this host's PATH." if argv is None
-                      else "This host has no POSIX pseudo-terminal.")
+            reason = (
+                "The hermes launcher is not on this host's PATH."
+                if argv is None
+                else "This host has no POSIX pseudo-terminal."
+            )
             await websocket.send_text(f"\r\n\x1b[31m{reason}\x1b[0m\r\n")
             await websocket.close(code=1011)
             return
@@ -373,33 +393,25 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                     except ValueError:
                         command = None
                     if isinstance(command, dict) and command.get("type") == "resize":
-                        try:
-                            session.resize(int(command.get("cols", 80)), int(command.get("rows", 24)))
-                        except (TypeError, ValueError):
-                            pass
+                        with suppress(TypeError, ValueError):
+                            session.resize(
+                                int(command.get("cols", 80)), int(command.get("rows", 24))
+                            )
                         continue
                 session.write(text.encode())
 
-        async def watch_session() -> None:
-            while True:
-                await asyncio.sleep(_SESSION_CHECK_INTERVAL)
-                if not authed(websocket):
-                    await websocket.close(code=4401)
-                    return
-
-        tasks = [asyncio.create_task(pump_out()), asyncio.create_task(pump_in()),
-                 asyncio.create_task(watch_session())]
+        tasks = [
+            asyncio.create_task(pump_out()),
+            asyncio.create_task(pump_in()),
+            asyncio.create_task(watch_session(websocket)),
+        ]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await cancel_tasks(tasks)
             session.close()
-            try:
+            with suppress(RuntimeError, WebSocketDisconnect):
                 await websocket.close()
-            except (RuntimeError, WebSocketDisconnect):
-                pass
 
     async def proxy_http(request: Request) -> Response:
         if not authed(request):
@@ -417,7 +429,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if request.method == "GET" and request.url.path == "/":
             session = request.cookies.get(sessions.COOKIE) or ""
             view = request.query_params.get(webapp_mode.VIEW_QUERY)
-            consumed = handoff.consume(request.query_params.get(ENTRY_QUERY), session) if handoff else False
+            consumed = (
+                handoff.consume(request.query_params.get(ENTRY_QUERY), session)
+                if handoff
+                else False
+            )
             mode = webapp_mode.read_mode(data_dir)
             if view == "tui" or (not consumed and view != "hermes" and mode == "tui"):
                 return RedirectResponse(tui_webapp.TUI, status_code=303, headers=_NO_STORE)
@@ -426,36 +442,53 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 try:
                     target = await handoff.launch(session, query)
                 except HandoffError as exc:
-                    return HTMLResponse(str(exc), status_code=503, headers={
-                        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-                    })
+                    return HTMLResponse(
+                        str(exc),
+                        status_code=503,
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+                    )
                 # The password may have changed while the host CLI ran.
                 if not authed(request):
                     return RedirectResponse("/login", status_code=303)
                 if target:
-                    return RedirectResponse(target, status_code=303, headers={
-                        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-                        "Server-Timing": f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}",
-                    })
+                    return RedirectResponse(
+                        target,
+                        status_code=303,
+                        headers={
+                            "Cache-Control": "no-store",
+                            "Referrer-Policy": "no-referrer",
+                            "Server-Timing": f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}",
+                        },
+                    )
             query = strip_entry_query(query)
             if view is not None:
-                query = urlencode([(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
-                                   if k != webapp_mode.VIEW_QUERY])
+                query = urlencode(
+                    [
+                        (k, v)
+                        for k, v in parse_qsl(query, keep_blank_values=True)
+                        if k != webapp_mode.VIEW_QUERY
+                    ]
+                )
         url = upstream_base + request.url.path
         if query:
             url += "?" + query
         req_headers = hdrs.outbound_headers(
-            request.headers, upstream_host=upstream_host, upstream_port=upstream_port,
+            request.headers, upstream_host=upstream_host, upstream_port=upstream_port
         )
         # Normal reads have no request body. Avoid starting an empty chunked
         # upload to Hermes for every read (including aborted startup fetches).
-        bodyless = (request.method in {"GET", "HEAD"} and
-                    request.headers.get("content-length", "0") == "0" and
-                    "transfer-encoding" not in request.headers)
+        bodyless = (
+            request.method in {"GET", "HEAD"}
+            and request.headers.get("content-length", "0") == "0"
+            and "transfer-encoding" not in request.headers
+        )
         try:
             upstream = await client.send(
                 httpx.Request(
-                    request.method, url, headers=req_headers, content=None if bodyless else request.stream(),
+                    request.method,
+                    url,
+                    headers=req_headers,
+                    content=None if bodyless else request.stream(),
                 ),
                 stream=True,
             )
@@ -466,13 +499,20 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             return HTMLResponse("Hermes is not reachable on loopback.", status_code=502)
 
         links = ()
-        if (preload and request.method == "GET" and request.url.path == "/" and
-                upstream.status_code == 200 and upstream.headers.get("content-type", "").startswith("text/html")):
+        if (
+            preload
+            and request.method == "GET"
+            and request.url.path == "/"
+            and upstream.status_code == 200
+            and upstream.headers.get("content-type", "").startswith("text/html")
+        ):
             links = preload.current()
         # The official renderer sends several MB at cold boot. Negotiate a
         # smaller wire representation without caching or buffering a bundle.
         encoding = asset_encoding(request, upstream, prefer_zstd=handoff is not None)
-        return _ProxyResponse(upstream, encoding=encoding, gzip_level=5 if handoff else 1, links=links)
+        return _ProxyResponse(
+            upstream, encoding=encoding, gzip_level=5 if handoff else 1, links=links
+        )
 
     async def proxy_ws(websocket: WebSocket) -> None:
         if not authed(websocket):
@@ -484,7 +524,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         if query:
             ws_url += "?" + query
         extra = hdrs.outbound_headers(
-            websocket.headers, upstream_host=upstream_host, upstream_port=upstream_port,
+            websocket.headers,
+            upstream_host=upstream_host,
+            upstream_port=upstream_port,
             websocket=True,
         )
         subprotocols = []
@@ -497,7 +539,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             await websocket.close(code=1011)
             return
         connect_kw: dict = {
-            "additional_headers": extra, "max_size": None, "ping_interval": 20,
+            "additional_headers": extra,
+            "max_size": None,
+            "ping_interval": 20,
             "proxy": None,
         }
         if subprotocols:
@@ -532,32 +576,23 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             except (WebSocketDisconnect, websockets.ConnectionClosed):
                 pass
 
-        async def watch_session() -> None:
-            while authed(websocket):
-                await asyncio.sleep(_SESSION_CHECK_INTERVAL)
-            await websocket.close(code=4401)
-
-        tasks = []
+        tasks: list[asyncio.Task[None]] = []
         try:
             await websocket.accept(subprotocol=upstream.subprotocol)
             tasks = [
                 asyncio.create_task(client_to_up()),
                 asyncio.create_task(up_to_client()),
-                asyncio.create_task(watch_session()),
+                asyncio.create_task(watch_session(websocket)),
             ]
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await cancel_tasks(tasks)
             await upstream.close()
-            try:
+            with suppress(Exception):
                 await websocket.close()
-            except Exception:
-                pass
 
     @asynccontextmanager
-    async def lifespan(_app):
+    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
         try:
             yield
         finally:
@@ -577,7 +612,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             Route(tui_webapp.TUI + "/{asset}", tui_asset, methods=["GET"]),
             WebSocketRoute(tui_webapp.SOCKET, tui_socket),
             WebSocketRoute("/{path:path}", proxy_ws),
-            Route("/{path:path}", proxy_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),
+            Route(
+                "/{path:path}",
+                proxy_http,
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+            ),
         ],
         lifespan=lifespan,
     )
@@ -592,8 +631,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--webapp-handoff", action="store_true")
     args = parser.parse_args(argv)
-    from pathlib import Path
-
     data_dir = Path(args.data_dir)
     if args.bind not in {"127.0.0.1", "::1", "localhost"}:
         print("refusing non-loopback bind", file=sys.stderr)
@@ -607,7 +644,9 @@ def main(argv: list[str] | None = None) -> int:
         webapp_handoff=args.webapp_handoff,
     )
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
-    uvicorn.run(app, host=args.bind, port=args.port, log_level="warning", access_log=False, workers=1)
+    uvicorn.run(
+        app, host=args.bind, port=args.port, log_level="warning", access_log=False, workers=1
+    )
     return 0
 
 

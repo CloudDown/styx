@@ -21,16 +21,21 @@ class BenchLogin(unittest.TestCase):
         self.assertEqual(
             bench.parse_painting_url(html), "/_styx/login-background-wide-1280-deadbeef.webp"
         )
-        avif = html.replace(".webp", ".avif")
-        self.assertEqual(
-            bench.parse_painting_url(avif), "/_styx/login-background-wide-1280-deadbeef.avif"
+        avif = (
+            '<source type="image/avif" srcset="/_styx/login-background-wide-1280-cafe.avif 1280w">'
+            + html
         )
+        self.assertEqual(bench.parse_avif_url(avif), "/_styx/login-background-wide-1280-cafe.avif")
+        with self.assertRaises(ValueError):
+            bench.parse_avif_url(html)
         for broken in ("<html></html>", '<img src="/logo.png">'):
             with self.subTest(broken=broken):
                 with self.assertRaises(ValueError):
                     bench.parse_csrf(broken)
                 with self.assertRaises(ValueError):
                     bench.parse_painting_url(broken)
+                with self.assertRaises(ValueError):
+                    bench.parse_avif_url(broken)
 
     def test_summarizes_samples(self):
         self.assertEqual(bench.summarize([2.0, 4.0, 9.0]), {"min": 2.0, "median": 4.0, "max": 9.0})

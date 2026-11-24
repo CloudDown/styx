@@ -6,7 +6,7 @@ already trust (Tor Browser while open uses 9150, a standalone `tor` often 9050):
     python scripts/bench_login_tor.py --url "$(hermes styx url)" \
         --socks 127.0.0.1:9150 --runs 5
 
-It fetches `/login`, then the painting fallback the page references, and with
+It fetches `/login`, then both the AVIF and WebP fallback paintings, and with
 `--login` also times the password POST. The onion address is never printed.
 
 Requires `curl` with SOCKS5 support. No plugin dependency is imported.
@@ -27,7 +27,8 @@ from pathlib import Path
 from urllib.parse import urlencode, urljoin
 
 _CSRF = re.compile(r'name="csrf" value="([^"]+)"')
-_PAINTING = re.compile(r'<img[^>]+src="([^"]+\.(?:avif|webp))"')
+_PAINTING = re.compile(r'<img[^>]+src="([^"]+\.webp)"')
+_AVIF = re.compile(r'<source type="image/avif" srcset="([^"\s]+\.avif)')
 _WRITE_OUT = "%{http_code} %{time_total} %{size_download}"
 
 
@@ -39,9 +40,18 @@ def parse_csrf(html: str) -> str:
 
 
 def parse_painting_url(html: str) -> str:
+    """The WebP fallback used by browsers without AVIF support."""
     match = _PAINTING.search(html)
     if not match:
-        raise ValueError("no painting fallback in the login page")
+        raise ValueError("no WebP painting fallback in the login page")
+    return match.group(1)
+
+
+def parse_avif_url(html: str) -> str:
+    """The fallback AVIF source, not a viewport-specific media source."""
+    match = _AVIF.search(html)
+    if not match:
+        raise ValueError("no AVIF painting fallback in the login page")
     return match.group(1)
 
 
@@ -150,7 +160,11 @@ def main(argv: list[str] | None = None) -> int:
                 painting = urljoin(base, parse_painting_url(html))
                 image_code, image_seconds, image_size = _fetch(painting, args.socks, jar)
                 if image_code != 200:
-                    raise RuntimeError(f"painting returned HTTP {image_code}")
+                    raise RuntimeError(f"WebP painting returned HTTP {image_code}")
+                avif = urljoin(base, parse_avif_url(html))
+                avif_code, avif_seconds, avif_size = _fetch(avif, args.socks, jar)
+                if avif_code != 200:
+                    raise RuntimeError(f"AVIF painting returned HTTP {avif_code}")
                 post_seconds = None
                 if args.login:
                     csrf = parse_csrf(html)
@@ -169,14 +183,17 @@ def main(argv: list[str] | None = None) -> int:
                         "run": index,
                         "login_s": seconds,
                         "login_bytes": size,
-                        "painting_s": image_seconds,
-                        "painting_bytes": image_size,
+                        "painting_webp_s": image_seconds,
+                        "painting_webp_bytes": image_size,
+                        "painting_avif_s": avif_seconds,
+                        "painting_avif_bytes": avif_size,
                         "post_s": post_seconds,
                     }
                 )
                 print(
                     f"  run {index}: login {seconds:.2f}s / {size} B, "
-                    f"painting {image_seconds:.2f}s / {image_size} B"
+                    f"webp {image_seconds:.2f}s / {image_size} B, "
+                    f"avif {avif_seconds:.2f}s / {avif_size} B"
                     + (f", POST {post_seconds:.2f}s" if post_seconds is not None else "")
                 )
     except (RuntimeError, ValueError, OSError) as exc:
@@ -185,7 +202,15 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = {
         key: summarize([float(sample[key]) for sample in samples if sample[key] is not None])
-        for key in ("login_s", "login_bytes", "painting_s", "painting_bytes", "post_s")
+        for key in (
+            "login_s",
+            "login_bytes",
+            "painting_webp_s",
+            "painting_webp_bytes",
+            "painting_avif_s",
+            "painting_avif_bytes",
+            "post_s",
+        )
         if any(sample[key] is not None for sample in samples)
     }
     for key, stats in summary.items():

@@ -69,7 +69,9 @@ python scripts/bench_login_tor.py --url "$(hermes styx url)" \
     --socks 127.0.0.1:9150 --runs 5 [--login]
 ```
 
-Il rapporte les temps et octets médians pour le formulaire, la peinture de repli et, avec `--login`, la redirection après mot de passe. Le Tor de Styx garde volontairement `SocksPort 0` : il ne sert pas de proxy général.
+Il rapporte les temps et octets médians pour le formulaire, les peintures AVIF et WebP de repli et, avec `--login`, la redirection après mot de passe. Le Tor de Styx garde volontairement `SocksPort 0` : il ne sert pas de proxy général.
+
+Mesure du 24/11 sur un circuit Tor réel (Tor 0.4.9, 3 passages, montage local) : formulaire **3,2 Ko en ~1,4 s médian**, peinture AVIF **63 Ko en ~1,56 s** contre **111 Ko en ~1,63 s** en WebP, soit environ 2,8–3 s avant l'interface complète. Ces chiffres valident le chemin Tor et le gain AVIF, mais restent dépendants du circuit et de la machine ; mesurez votre propre réseau avec le script.
 
 Avec Zstandard, le même scénario mesure **12,0 s à froid** et **2,3 s à la réouverture**, pour **3,07 Mo** de fichiers statiques à froid. Précharger davantage de modules n'a pas amélioré l'affichage. Viser cinq secondes à froid à ce débit demande de sortir du graphe de démarrage d'Hermes les modules non nécessaires au premier écran, pour les charger à leur première utilisation. Ne pas confondre ce budget avec le temps de génération des réponses du modèle.
 

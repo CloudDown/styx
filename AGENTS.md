@@ -44,7 +44,7 @@ Tor Browser → http://<v3>.onion
 | `backend/network.py` | shared loopback validation and port readiness helpers |
 | `backend/storage.py` | atomic 0600 writes for passwords, state and process identities |
 | `backend/platform_support.py` | portable locks/spawn flags; POSIX private modes and Windows protected ACLs |
-| `backend/login_page.py` | minimal glass password field + same-origin immutable painting, **no external assets** |
+| `backend/login_page.py` | minimal glass password field + same-origin immutable AVIF/WebP painting, **no external assets** |
 | `backend/passwords.py` | scrypt; empty refused; **no min length** |
 | `backend/sessions.py` | HMAC cookie `styx_session`, 12h; key derived from current password hash |
 | `backend/tor_supervisor.py` | dedicated tor, `SocksPort 0`, HS v3 → gate |
@@ -81,7 +81,7 @@ rules (line length 100, py311 target); keep both checks green.
 
 - Public plugin API only (`hermes_cli.config`, `plugins.plugin_storage`, …). `hermes plugins validate` must stay green.
 - Do not monkeypatch Hermes core.
-- Login page: no external network. Master painting in `assets/login-background.jpg`; prebuilt centered WebP crops in `assets/login/` selected natively by viewport via `<picture>`. Only those fixed, content-addressed public artwork URLs are immutable, never the form/CSRF. No request-time image processing. Minimal glass password field; mobile safe areas and keyboard-aware layout.
+- Login page: no external network. Master painting in `assets/login-background.jpg`; prebuilt centered AVIF + WebP crops in `assets/login/` selected natively by viewport via `<picture>` (AVIF first, WebP fallback). Only those fixed, content-addressed public artwork URLs are immutable, never the form/CSRF. No request-time image processing. Minimal glass password field; mobile safe areas and keyboard-aware layout.
 - Private webapp tabs need Hermes' native sessionStorage grant. After valid
   Cerberus auth, use public `hermes webapp --no-open --skip-build` and the
   official /webapp/launch → /webapp/window-session flow. Never read native

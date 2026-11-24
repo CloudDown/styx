@@ -51,6 +51,16 @@ class ProxyAndTorrc(unittest.TestCase):
                 f'HiddenServiceDir "{(root / "hidden_service").resolve().as_posix()}"', text
             )
 
+    def test_upstream_cannot_override_or_clear_styx_cookies(self):
+        incoming = [
+            ("Set-Cookie", "styx_session=evil; Path=/"),
+            ("Set-Cookie", "styx_csrf=evil, Path=/login"),
+            ("Set-Cookie", "hermes=kept; Path=/"),
+        ]
+        self.assertEqual(
+            inbound_response_headers(incoming), [("Set-Cookie", "hermes=kept; Path=/")]
+        )
+
     def test_connection_nominated_headers_are_removed_in_both_directions(self):
         incoming = [("Connection", "keep-alive, X-Private"), ("X-Private", "no"), ("Accept", "yes")]
         outgoing = outbound_headers(incoming, upstream_host="127.0.0.1", upstream_port=9120)

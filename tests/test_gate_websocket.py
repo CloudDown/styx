@@ -26,7 +26,7 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
         self.close_first = False
         self.protocols = ["echo"]
 
-    async def connect(self, token=None, protocols=True):
+    async def connect(self, token=None, protocols=True, origin="http://test.local"):
         async def handler(ws):
             self.requests.append(ws.request)
             try:
@@ -53,7 +53,6 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
         self.outgoing = asyncio.Queue()
         headers = [
             (b"host", b"test.local"),
-            (b"origin", b"http://test.local"),
             (b"connection", b"upgrade"),
             (b"upgrade", b"websocket"),
             (b"sec-websocket-key", b"dGhlIHNhbXBsZSBub25jZQ=="),
@@ -62,6 +61,8 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
         ]
         if protocols:
             headers.append((b"sec-websocket-protocol", b"echo, unused"))
+        if origin is not None:
+            headers.append((b"origin", origin.encode("ascii")))
         scope = {
             "type": "websocket",
             "asgi": {"version": "3.0", "spec_version": "2.5"},
@@ -104,6 +105,16 @@ class WebSocketProxy(unittest.IsolatedAsyncioTestCase):
         await self.incoming.put({"type": "websocket.disconnect", "code": 1000})
         await asyncio.wait_for(self.task, timeout=2)
         await asyncio.wait_for(self.closed.wait(), timeout=2)
+
+    async def test_cross_origin_websocket_is_rejected(self):
+        message = await self.connect(origin="http://evil.example")
+        self.assertEqual(message["type"], "websocket.close")
+        self.assertEqual(message["code"], 4403)
+        self.assertFalse(self.requests)
+
+    async def test_originless_client_is_still_accepted_for_non_browsers(self):
+        message = await self.connect(origin=None)
+        self.assertEqual(message["type"], "websocket.accept")
 
     async def test_upstream_disconnect_cancels_waiting_client_relay(self):
         self.close_first = True

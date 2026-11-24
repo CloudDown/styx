@@ -77,6 +77,15 @@ class TuiSocket(unittest.TestCase):
                 with self.assertRaises(WebSocketDisconnect):
                     socket.receive_text()
 
+    def test_cross_origin_terminal_is_refused(self):
+        self.login()
+        with self.assertRaises(WebSocketDisconnect) as error:
+            with self.client.websocket_connect(
+                tui_webapp.SOCKET, headers={"origin": "http://evil.example"}
+            ):
+                pass
+        self.assertEqual(error.exception.code, 4403)
+
     def test_terminal_start_failure_is_reported_and_the_socket_closed(self):
         self.login()
         with (

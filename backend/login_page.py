@@ -30,35 +30,38 @@ BACKGROUND_GROUPS = (
     ("", ("wide-1280", "wide-1920")),
 )
 _DEFAULT_BACKGROUND = "landscape-1600"
+# AVIF first: roughly a third fewer bytes than WebP for the same crop. Browsers
+# without AVIF support fall back to the WebP sources below it.
+BACKGROUND_FORMATS = {"avif": "image/avif", "webp": "image/webp"}
 
 
-@lru_cache(maxsize=len(BACKGROUND_SIZES))
-def background_bytes(variant: str = _DEFAULT_BACKGROUND) -> bytes:
-    if variant not in BACKGROUND_SIZES:
+@lru_cache(maxsize=len(BACKGROUND_SIZES) * len(BACKGROUND_FORMATS))
+def background_bytes(variant: str = _DEFAULT_BACKGROUND, fmt: str = "webp") -> bytes:
+    if variant not in BACKGROUND_SIZES or fmt not in BACKGROUND_FORMATS:
         raise ValueError("unknown login background")
-    image = PLUGIN_ROOT / "assets" / "login" / f"{variant}.webp"
+    image = PLUGIN_ROOT / "assets" / "login" / f"{variant}.{fmt}"
     return image.read_bytes()
 
 
-@lru_cache(maxsize=len(BACKGROUND_SIZES))
-def background_digest(variant: str = _DEFAULT_BACKGROUND) -> str:
-    return hashlib.sha256(background_bytes(variant)).hexdigest()
+@lru_cache(maxsize=len(BACKGROUND_SIZES) * len(BACKGROUND_FORMATS))
+def background_digest(variant: str = _DEFAULT_BACKGROUND, fmt: str = "webp") -> str:
+    return hashlib.sha256(background_bytes(variant, fmt)).hexdigest()
 
 
-@lru_cache(maxsize=len(BACKGROUND_SIZES))
-def background_url(variant: str = _DEFAULT_BACKGROUND) -> str:
+@lru_cache(maxsize=len(BACKGROUND_SIZES) * len(BACKGROUND_FORMATS))
+def background_url(variant: str = _DEFAULT_BACKGROUND, fmt: str = "webp") -> str:
     # Only the public painting is cacheable; never the form or its CSRF token.
-    return f"/_styx/login-background-{variant}-{background_digest(variant)}.webp"
+    return f"/_styx/login-background-{variant}-{background_digest(variant, fmt)}.{fmt}"
 
 
-@lru_cache(maxsize=len(BACKGROUND_SIZES))
-def background_etag(variant: str = _DEFAULT_BACKGROUND) -> str:
-    return f'"{background_digest(variant)}"'
+@lru_cache(maxsize=len(BACKGROUND_SIZES) * len(BACKGROUND_FORMATS))
+def background_etag(variant: str = _DEFAULT_BACKGROUND, fmt: str = "webp") -> str:
+    return f'"{background_digest(variant, fmt)}"'
 
 
-def _srcset(variants: tuple[str, ...]) -> str:
+def _srcset(variants: tuple[str, ...], fmt: str = "webp") -> str:
     return ", ".join(
-        f"{background_url(variant)} {BACKGROUND_SIZES[variant][0]}w" for variant in variants
+        f"{background_url(variant, fmt)} {BACKGROUND_SIZES[variant][0]}w" for variant in variants
     )
 
 
@@ -70,16 +73,19 @@ def _preview() -> str:
 
 def _painting() -> str:
     sources = "\n".join(
-        f'<source media="{media}" srcset="{_srcset(variants)}" sizes="100vw">'
+        f'<source type="{BACKGROUND_FORMATS[fmt]}" media="{media}" '
+        f'srcset="{_srcset(variants, fmt)}" sizes="100vw">'
         for media, variants in BACKGROUND_GROUPS
         if media
+        for fmt in BACKGROUND_FORMATS
     )
     fallback = BACKGROUND_GROUPS[-1][1]
     # No unconditional image preload: it would download the wrong crop as well
     # on mobile. The native picture/preload scanner chooses exactly one source.
     return f"""<picture class="painting" aria-hidden="true">
 {sources}
-<img src="{background_url(fallback[0])}" srcset="{_srcset(fallback)}"
+<source type="image/avif" srcset="{_srcset(fallback, "avif")}" sizes="100vw">
+<img src="{background_url(fallback[0], "webp")}" srcset="{_srcset(fallback, "webp")}"
      sizes="100vw" width="1280" height="549" alt=""
      fetchpriority="high" decoding="async" draggable="false">
 </picture>"""
@@ -236,7 +242,6 @@ def render(error: str = "", csrf: str = "", next_path: str = "") -> str:
 </style>
 </head>
 <body>
-{_painting()}
 <main aria-label="Styx login">
   <form method="post" action="/login">
     <input type="hidden" name="csrf" value="{csrf_e}">
@@ -256,6 +261,7 @@ def render(error: str = "", csrf: str = "", next_path: str = "") -> str:
     {banner}
   </form>
 </main>
+{_painting()}
 </body>
 </html>
 """

@@ -13,15 +13,17 @@ Palazzo Medici-Riccardi, Florence.
 ## Files
 
 - `assets/login-background.jpg`: the original local painting, retained as the master.
-- `assets/login/*.webp`: eight prebuilt, centered crops (portrait, tablet,
-  landscape and wide). Native `<picture>` media queries and width descriptors
-  select by viewport aspect ratio, width and pixel density, capped at the
-  largest candidate per crop. A phone downloads a 480/640-pixel-wide portrait,
-  not the original landscape painting. The crops have content-addressed,
-  same-origin immutable URLs; the private form and CSRF token remain `no-store`.
-  There is no request-time resizing, external image service or JavaScript.
-  Narrow phone widths keep the portrait source while the keyboard shortens
-  the viewport, avoiding an extra background download during password entry.
+- `assets/login/*.avif` and `assets/login/*.webp`: eight prebuilt, centered
+  crops (portrait, tablet, landscape and wide) in AVIF and WebP. `<picture>`
+  offers AVIF first and falls back to WebP; native media queries and width
+  descriptors select by viewport aspect ratio, width and pixel density, capped
+  at the largest candidate per crop. A phone downloads a 480/640-pixel-wide
+  portrait, not the original landscape painting. AVIF is roughly 35–45 % smaller
+  than the equivalent WebP. The crops have content-addressed, same-origin
+  immutable URLs; the private form and CSRF token remain `no-store`. There is
+  no request-time resizing, external image service or JavaScript. Narrow phone
+  widths keep the portrait source while the keyboard shortens the viewport,
+  avoiding an extra background download during password entry.
 - `assets/login/preview.webp`: a tiny (48-pixel-wide) inline preview painted
   immediately with the form, while the selected detailed crop downloads.
 - `docs/login.png`: the existing 1440 × 900 login-page screenshot used in the README
@@ -40,5 +42,6 @@ The login page uses only local assets. Linking to this credit does not cause
 the gate or login page to contact Wikimedia.
 
 Rebuild the login crops with `python scripts/build_login_backgrounds.py` in a
-development environment with Pillow and the plugin dependencies installed.
-The gate itself does not require Pillow.
+development environment with Pillow, `avifenc` and the plugin dependencies
+installed. Without an AVIF encoder the script rebuilds WebP and leaves AVIF
+unchanged. The gate itself requires neither Pillow nor libavif.

@@ -61,6 +61,28 @@ def _safe_next(raw: str | None) -> str:
     return value
 
 
+def _authority(value: str) -> tuple[str, int] | None:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return None
+    if not parsed.hostname:
+        return None
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return parsed.hostname.casefold(), port
+
+
+def _same_origin(connection: Request | WebSocket) -> bool:
+    """Browsers send Origin on WebSockets and mutations; non-browser clients may not."""
+    origin = connection.headers.get("origin")
+    if not origin:
+        return True
+    host = connection.headers.get("host", "")
+    return _authority(origin) is not None and _authority(origin) == _authority("http://" + host)
+
+
 class _LoginLimiter:
     """One global budget per gate, including attempts currently in flight."""
 
@@ -143,12 +165,15 @@ def build_app(
         "/"
     )
     limiter = _LoginLimiter()
+    revoked = sessions.Revocations()
     hash_slots = asyncio.Semaphore(2)
     render_slots = asyncio.Semaphore(2)
     handoff = WebappHandoff(upstream_host, upstream_port) if webapp_handoff else None
     preload = WebappPreload(client, upstream_base) if handoff else None
     login_backgrounds = {
-        login_page.background_url(variant): variant for variant in login_page.BACKGROUND_SIZES
+        login_page.background_url(variant, fmt): (variant, fmt)
+        for fmt in login_page.BACKGROUND_FORMATS
+        for variant in login_page.BACKGROUND_SIZES
     }
 
     def auth_key() -> bytes | None:
@@ -157,7 +182,8 @@ def build_app(
 
     def authed(connection: Request | WebSocket) -> bool:
         key = auth_key()
-        return key is not None and sessions.valid(key, connection.cookies.get(sessions.COOKIE))
+        token = connection.cookies.get(sessions.COOKIE)
+        return key is not None and not revoked.contains(token) and sessions.valid(key, token)
 
     async def watch_session(connection: WebSocket) -> None:
         """Close a long-lived socket within one second of a password change."""
@@ -194,15 +220,21 @@ def build_app(
             resp.headers["Content-Encoding"] = "gzip"
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        )
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.set_cookie(
             sessions.CSRF_COOKIE, csrf, httponly=True, samesite="lax", max_age=600, path="/login"
         )
         return resp
 
     async def login_background(request: Request) -> Response:
-        variant = login_backgrounds[request.url.path]
-        image = login_page.background_bytes(variant)
-        etag = login_page.background_etag(variant)
+        variant, fmt = login_backgrounds[request.url.path]
+        image = login_page.background_bytes(variant, fmt)
+        etag = login_page.background_etag(variant, fmt)
         headers = {
             "Cache-Control": "public, max-age=31536000, immutable",
             "ETag": etag,
@@ -211,7 +243,7 @@ def build_app(
         tags = request.headers.get("if-none-match", "").split(",")
         if any(tag.strip().removeprefix("W/") in (etag, "*") for tag in tags):
             return Response(status_code=304, headers=headers)
-        return Response(image, media_type="image/webp", headers=headers)
+        return Response(image, media_type=login_page.BACKGROUND_FORMATS[fmt], headers=headers)
 
     async def verify(password: str, stored: str) -> bool:
         async with hash_slots:
@@ -321,6 +353,7 @@ def build_app(
         return resp
 
     async def logout(request: Request) -> Response:
+        revoked.revoke(request.cookies.get(sessions.COOKIE))
         resp = RedirectResponse("/login", status_code=303)
         resp.delete_cookie(sessions.COOKIE, path="/")
         return resp
@@ -347,6 +380,9 @@ def build_app(
 
     async def tui_socket(websocket: WebSocket) -> None:
         """One fixed command in a real PTY. Nothing here is client-chosen."""
+        if not _same_origin(websocket):
+            await websocket.close(code=4403)
+            return
         if not authed(websocket):
             await websocket.close(code=4401)
             return
@@ -414,6 +450,8 @@ def build_app(
                 await websocket.close()
 
     async def proxy_http(request: Request) -> Response:
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and not _same_origin(request):
+            return Response(status_code=403, headers=_NO_STORE)
         if not authed(request):
             if request.url.path == "/favicon.ico":
                 # Browsers ask for this automatically; do not redirect a
@@ -515,6 +553,9 @@ def build_app(
         )
 
     async def proxy_ws(websocket: WebSocket) -> None:
+        if not _same_origin(websocket):
+            await websocket.close(code=4403)
+            return
         if not authed(websocket):
             await websocket.close(code=4401)
             return

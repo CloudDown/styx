@@ -119,6 +119,39 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertIn('name="next" value="/api/profiles"', response.text)
 
+    async def test_login_page_carries_restrictive_security_headers(self):
+        response = await self.browser.get("/login")
+        csp = response.headers["content-security-policy"]
+        for directive in (
+            "default-src 'none'",
+            "img-src 'self' data:",
+            "style-src 'unsafe-inline'",
+            "form-action 'self'",
+            "frame-ancestors 'none'",
+        ):
+            self.assertIn(directive, csp)
+        self.assertEqual(response.headers["x-frame-options"], "DENY")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+
+    async def test_cross_origin_mutations_are_refused_before_proxying(self):
+        await self.login()
+        refused = await self.browser.post(
+            "/api/profiles", content=b"x", headers={"origin": "http://evil.example"}
+        )
+        self.assertEqual(refused.status_code, 403)
+        allowed = await self.browser.post(
+            "/api/profiles", content=b"x", headers={"origin": "http://test.local"}
+        )
+        self.assertEqual(allowed.status_code, 200)
+
+    async def test_logout_revokes_the_token_even_if_the_cookie_is_replayed(self):
+        self.assertEqual((await self.login()).status_code, 303)
+        token = self.browser.cookies[sessions.COOKIE]
+        self.assertEqual((await self.browser.get("/logout")).status_code, 303)
+        replayed = await self.browser.get("/", headers={"cookie": f"{sessions.COOKIE}={token}"})
+        self.assertEqual(replayed.status_code, 303)
+        self.assertTrue(replayed.headers["location"].startswith("/login"))
+
     async def test_unauthenticated_favicon_does_not_touch_login_cookies(self):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]
@@ -160,27 +193,29 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         # The complete usable form no longer transfers the painting on each GET.
         self.assertLess(encoded.text.index('name="password"'), 6500)
         self.assertNotIn("data:image/jpeg;base64,", encoded.text)
-        self.assertLess(len(identity.content), 7000)
+        self.assertLess(len(identity.content), 9000)
 
     async def test_only_the_public_painting_is_immutable_and_requires_no_session(self):
-        url = gate.login_page.background_url()
-        response = await self.browser.get(url)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.content, gate.login_page.background_bytes())
-        self.assertEqual(response.headers["content-type"], "image/webp")
-        self.assertIn("immutable", response.headers["cache-control"])
-        self.assertNotIn("set-cookie", response.headers)
-        self.assertNotIn("content-encoding", response.headers)
-        etag = response.headers["etag"]
-        for tag in (etag, "W/" + etag, '"other", ' + etag, "*"):
-            cached = await self.browser.get(url, headers={"if-none-match": tag})
-            self.assertEqual(cached.status_code, 304)
-            self.assertEqual(cached.content, b"")
-            self.assertNotIn("set-cookie", cached.headers)
-        head = await self.browser.head(url)
-        self.assertEqual(head.status_code, 200)
-        self.assertEqual(head.content, b"")
-        self.assertEqual(int(head.headers["content-length"]), len(response.content))
+        for fmt, media_type in gate.login_page.BACKGROUND_FORMATS.items():
+            with self.subTest(fmt=fmt):
+                url = gate.login_page.background_url(fmt=fmt)
+                response = await self.browser.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.content, gate.login_page.background_bytes(fmt=fmt))
+                self.assertEqual(response.headers["content-type"], media_type)
+                self.assertIn("immutable", response.headers["cache-control"])
+                self.assertNotIn("set-cookie", response.headers)
+                self.assertNotIn("content-encoding", response.headers)
+                etag = response.headers["etag"]
+                for tag in (etag, "W/" + etag, '"other", ' + etag, "*"):
+                    cached = await self.browser.get(url, headers={"if-none-match": tag})
+                    self.assertEqual(cached.status_code, 304)
+                    self.assertEqual(cached.content, b"")
+                    self.assertNotIn("set-cookie", cached.headers)
+                head = await self.browser.head(url)
+                self.assertEqual(head.status_code, 200)
+                self.assertEqual(head.content, b"")
+                self.assertEqual(int(head.headers["content-length"]), len(response.content))
         # No directory, arbitrary image or upstream asset becomes public.
         for path in (
             "/_styx/login-background-wrong.jpg",
@@ -192,21 +227,24 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(login.headers["cache-control"], "no-store")
 
     async def test_all_login_crops_are_public_but_no_image_resizing_endpoint_exists(self):
-        for variant in gate.login_page.BACKGROUND_SIZES:
-            url = gate.login_page.background_url(variant)
-            response = await self.browser.get(url)
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.content, gate.login_page.background_bytes(variant))
-            self.assertEqual(response.headers["content-type"], "image/webp")
-            self.assertIn("immutable", response.headers["cache-control"])
-            self.assertNotIn("set-cookie", response.headers)
-            # The hash and variant must both be in the fixed route allowlist.
-            wrong = url.replace(variant, "portrait-99999", 1)
-            self.assertEqual((await self.browser.get(wrong)).status_code, 303)
+        for fmt, media_type in gate.login_page.BACKGROUND_FORMATS.items():
+            for variant in gate.login_page.BACKGROUND_SIZES:
+                with self.subTest(fmt=fmt, variant=variant):
+                    url = gate.login_page.background_url(variant, fmt)
+                    response = await self.browser.get(url)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.content, gate.login_page.background_bytes(variant, fmt)
+                    )
+                    self.assertEqual(response.headers["content-type"], media_type)
+                    self.assertIn("immutable", response.headers["cache-control"])
+                    self.assertNotIn("set-cookie", response.headers)
+                    # The hash and variant must both be in the fixed route allowlist.
+                    wrong = url.replace(variant, "portrait-99999", 1)
+                    self.assertEqual((await self.browser.get(wrong)).status_code, 303)
         self.assertEqual((await self.browser.post(url, content=b"x")).status_code, 303)
-        self.assertEqual(
-            (await self.browser.get("/assets/login/portrait-480.webp")).status_code, 303
-        )
+        for raw in ("/assets/login/portrait-480.webp", "/assets/login/portrait-480.avif"):
+            self.assertEqual((await self.browser.get(raw)).status_code, 303)
 
     async def test_valid_login_does_not_wait_for_the_failure_backoff(self):
         with (

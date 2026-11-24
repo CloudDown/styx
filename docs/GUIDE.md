@@ -62,9 +62,18 @@ Après Cerberus, Styx lit en arrière-plan le manifeste public de la Webapp offi
 
 Sur trois ouvertures à froid en Chromium (200 ms de latence, 3 Mbit/s simulés), le champ de saisie était visible en médiane **12,5 s** après validation du mot de passe, contre **14,4 s** avant. Les fichiers statiques reçus jusqu'à cet affichage sont passés de **4,04 Mo à 3,48 Mo**. Ce test est local, pas une mesure du réseau Tor. Le moteur de Tor Browser a aussi été vérifié en local : un seul téléchargement du module et du CSS principaux chacun.
 
+Pour mesurer le vrai chemin Tor, `scripts/bench_login_tor.py` utilise un proxy SOCKS existant (Tor Browser ouvert écoute souvent sur `127.0.0.1:9150`, un `tor` autonome sur `9050`) et ne révèle pas l'adresse onion :
+
+```bash
+python scripts/bench_login_tor.py --url "$(hermes styx url)" \
+    --socks 127.0.0.1:9150 --runs 5 [--login]
+```
+
+Il rapporte les temps et octets médians pour le formulaire, la peinture de repli et, avec `--login`, la redirection après mot de passe. Le Tor de Styx garde volontairement `SocksPort 0` : il ne sert pas de proxy général.
+
 Avec Zstandard, le même scénario mesure **12,0 s à froid** et **2,3 s à la réouverture**, pour **3,07 Mo** de fichiers statiques à froid. Précharger davantage de modules n'a pas amélioré l'affichage. Viser cinq secondes à froid à ce débit demande de sortir du graphe de démarrage d'Hermes les modules non nécessaires au premier écran, pour les charger à leur première utilisation. Ne pas confondre ce budget avec le temps de génération des réponses du modèle.
 
-- **Cerberus** conserve exactement la même peinture, le même formulaire et aucune ressource externe. Le formulaire précède désormais les données de l'image dans le HTML pour pouvoir s'afficher sans attendre la peinture complète. La page utilise gzip si le navigateur l'accepte, sans mise en cache du formulaire ni de son jeton CSRF.
+- **Cerberus** conserve exactement la même peinture, le même formulaire et aucune ressource externe. Le formulaire précède désormais la peinture dans le HTML. Les crops sont proposés en AVIF (environ 35–45 % plus léger), avec repli WebP si le navigateur ne décode pas AVIF. La page utilise gzip si le navigateur l'accepte, sans mise en cache du formulaire ni de son jeton CSRF, et porte une CSP restrictive (`frame-ancestors 'none'`, aucune ressource externe).
 - **Après le mot de passe**, Styx demande directement le passage natif Hermes : un aller-retour vers la racine est supprimé. Aucune autorisation n'est créée avant la vérification du mot de passe. Les nouveaux onglets et rechargements utilisent toujours le flux officiel.
 - **Scripts et styles** : seuls les fichiers JS/CSS versionnés sous `/assets/`, explicitement publics et immuables côté Hermes, peuvent être compressés en streaming. La Webapp négocie Zstandard avec un navigateur compatible si le Python de Styx fournit ce module (Python 3.14 ou plus récent) ; gzip niveau 5 reste disponible. La compression reste hors de la boucle réseau. Les réponses déjà encodées, les plages de téléchargement, `no-transform` et les réponses portant des cookies ne sont pas transformées.
 - **Cache** : les directives natives d'Hermes sont conservées. Styx n'ajoute ni cache partagé ni stockage de données privées, de réponses API ou de tickets. Les pages natives d'authentification et les API restent transmises sans compression supplémentaire.
@@ -150,6 +159,15 @@ Les uploads et réponses du proxy sont transmis en flux. Le proxy préserve la c
 Les opérations de démarrage et d'arrêt utilisent un verrou natif exclusif. Avant un signal, Styx vérifie le propriétaire, la commande, le profil et l'identité de naissance du processus. Linux utilise les pidfds quand ils sont disponibles ; macOS, Windows et les anciens noyaux Linux utilisent les opérations psutil gardées par la date de création du processus. Aucun PID nu n'est signalé. Les anciens fichiers PID entiers restent acceptés après vérification d'identité. Les chemins Tor sont quotés, y compris avec des espaces.
 
 ## Développement
+
+Les contrats Hermes utilisés par Styx (manifeste du renderer, sortie de
+`hermes webapp --no-open --skip-build`) peuvent être vérifiés contre une
+installation réelle, hors CI :
+
+```bash
+STYX_HERMES_INTEGRATION=1 hermes --run-module unittest discover \
+    -s ~/projet/styx/tests -p 'test_hermes_contracts.py' -v
+```
 
 Gardez le nom de dossier `styx` : les imports du plugin et le lancement de Cerberus en dépendent.
 

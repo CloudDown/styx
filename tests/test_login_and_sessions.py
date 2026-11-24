@@ -32,6 +32,14 @@ class LoginAndSessions(unittest.TestCase):
         digest = hashlib.sha256(image.read_bytes()).hexdigest()
         self.assertIn(f"/_styx/login-background-landscape-1600-{digest}.webp", html)
         self.assertEqual(login_page.background_etag(), f'"{digest}"')
+        avif = login_page.background_bytes("landscape-1600", "avif")
+        self.assertEqual(avif[4:8], b"ftyp")
+        self.assertEqual(avif[8:12], b"avif")
+        self.assertIn(
+            f"/_styx/login-background-landscape-1600-{login_page.background_digest('landscape-1600', 'avif')}.avif",
+            html,
+        )
+        self.assertIn('type="image/avif"', html)
         self.assertIn("<picture", html)
         self.assertIn('fetchpriority="high"', html)
         self.assertNotIn('rel="preload"', html)
@@ -39,25 +47,40 @@ class LoginAndSessions(unittest.TestCase):
         self.assertNotIn("data:image/jpeg;base64,", html)
         preview = html.split("data:image/webp;base64,", 1)[1].split('"', 1)[0]
         self.assertLess(len(base64.b64decode(preview)), 1024)
-        self.assertLess(len(html.encode()), 7000)
+        self.assertLess(len(html.encode()), 9000)
+        # The form comes before the painting markup and its image URLs.
+        self.assertLess(html.index('name="password"'), html.index("<picture"))
 
     def test_backgrounds_are_bounded_local_crops_not_arbitrary_paths(self):
         root = Path(__file__).resolve().parents[1]
         original_size = (root / "assets/login-background.jpg").stat().st_size
         for variant in login_page.BACKGROUND_SIZES:
-            image = login_page.background_bytes(variant)
-            self.assertEqual(image[:4], b"RIFF")
-            self.assertEqual(image[8:12], b"WEBP")
-            self.assertLess(len(image), original_size // 3)
-            self.assertIn(hashlib.sha256(image).hexdigest(), login_page.background_url(variant))
+            webp = login_page.background_bytes(variant)
+            self.assertEqual(webp[:4], b"RIFF")
+            self.assertEqual(webp[8:12], b"WEBP")
+            avif = login_page.background_bytes(variant, "avif")
+            self.assertEqual(avif[4:8], b"ftyp")
+            self.assertEqual(avif[8:12], b"avif")
+            self.assertLess(len(avif), len(webp))
+            self.assertLess(len(avif), original_size // 3)
+            self.assertIn(hashlib.sha256(webp).hexdigest(), login_page.background_url(variant))
+            self.assertIn(
+                hashlib.sha256(avif).hexdigest(), login_page.background_url(variant, "avif")
+            )
         self.assertLess(len(login_page.background_bytes("portrait-640")), 100_000)
         for variant in ("../passwd", "original", "portrait-99999"):
             with self.assertRaises(ValueError):
                 login_page.background_bytes(variant)
+            with self.assertRaises(ValueError):
+                login_page.background_bytes(variant, "avif")
+        for fmt in ("jpg", "gif", ""):
+            with self.assertRaises(ValueError):
+                login_page.background_bytes("portrait-480", fmt)
 
     def test_mobile_layout_and_native_resolution_selection(self):
         html = login_page.render()
         self.assertIn('media="(max-width: 600px), (max-aspect-ratio: 3/5)"', html)
+        self.assertLess(html.index('type="image/avif"'), html.index('type="image/webp"'))
         self.assertIn('media="(max-aspect-ratio: 1/1)"', html)
         self.assertIn('media="(max-aspect-ratio: 2/1)"', html)
         self.assertIn('sizes="100vw"', html)
@@ -93,6 +116,20 @@ class LoginAndSessions(unittest.TestCase):
         self.assertIn('aria-label="Password"', html)
         self.assertNotIn('role="alert"', html)
         self.assertNotIn('aria-invalid="true"', html)
+
+    def test_logout_revocations_expire_and_stay_bounded(self):
+        with patch.object(sessions.time, "time", return_value=100):
+            revocations = sessions.Revocations(max_entries=2)
+            revocations.revoke("first")
+            revocations.revoke("second")
+            revocations.revoke("third")
+            self.assertTrue(revocations.contains("third"))
+            self.assertFalse(revocations.contains("first"))
+        with patch.object(sessions.time, "time", return_value=100 + sessions.TTL_SECONDS + 1):
+            self.assertFalse(revocations.contains("third"))
+        self.assertFalse(revocations.contains(None))
+        with self.assertRaises(ValueError):
+            sessions.Revocations(max_entries=0)
 
     def test_session_roundtrip(self):
         with tempfile.TemporaryDirectory() as raw:

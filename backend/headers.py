@@ -106,6 +106,8 @@ def inbound_response_headers(
     for key, value in items:
         if key.lower() in skip:
             continue
+        if key.lower() == "set-cookie" and value.lstrip().lower().startswith(_STYX_COOKIE_PREFIX):
+            continue
         out.append((key, value))
     return out
 

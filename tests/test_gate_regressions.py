@@ -79,6 +79,39 @@ class GateRegressions(unittest.IsolatedAsyncioTestCase):
         response = await self.browser.post("/login", data={"csrf": csrf, "password": "old-password"})
         self.assertEqual(response.status_code, 303)
 
+    async def test_login_preserves_an_internal_next_page(self):
+        page = await self.browser.get("/login", params={"next": "/api/profiles?tab=1"})
+        self.assertIn('name="next" value="/api/profiles?tab=1"', page.text)
+        csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+        response = await self.browser.post("/login", data={
+            "csrf": csrf, "password": "old-password", "next": "/api/profiles?tab=1",
+        })
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/api/profiles?tab=1")
+
+    async def test_login_drops_external_malformed_or_oversized_next_pages(self):
+        for bad in ("https://evil.example/x", "//evil.example/x", "/\\evil.example/x",
+                    "/x" * 2000):
+            with self.subTest(next_page=bad[:32]):
+                self.browser.cookies.clear()
+                page = await self.browser.get("/login", params={"next": bad})
+                self.assertNotIn("evil.example", page.text)
+                csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+                response = await self.browser.post("/login", data={
+                    "csrf": csrf, "password": "old-password", "next": bad,
+                })
+                self.assertEqual(response.status_code, 303)
+                self.assertEqual(response.headers["location"], "/")
+
+    async def test_failed_login_keeps_the_requested_page(self):
+        await self.browser.get("/login", params={"next": "/api/profiles"})
+        csrf = self.browser.cookies[sessions.CSRF_COOKIE]
+        response = await self.browser.post("/login", data={
+            "csrf": csrf, "password": "wrong-password", "next": "/api/profiles",
+        })
+        self.assertEqual(response.status_code, 401)
+        self.assertIn('name="next" value="/api/profiles"', response.text)
+
     async def test_unauthenticated_favicon_does_not_touch_login_cookies(self):
         await self.browser.get("/login")
         csrf = self.browser.cookies[sessions.CSRF_COOKIE]

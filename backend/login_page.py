@@ -76,8 +76,12 @@ def _painting() -> str:
 </picture>"""
 
 
-def render(error: str = "", csrf: str = "") -> str:
+def render(error: str = "", csrf: str = "", next_path: str = "") -> str:
     csrf_e = htmlmod.escape(csrf, quote=True)
+    # Keep the requested internal page across the login POST; the gate
+    # validates and caps it before it reaches this template.
+    next_e = htmlmod.escape(next_path, quote=True) if next_path else ""
+    next_input = f'    <input type="hidden" name="next" value="{next_e}">\n' if next_e else ""
     banner = (
         f'<p id="error" role="alert">{htmlmod.escape(error)}</p>' if error else ""
     )
@@ -229,7 +233,7 @@ def render(error: str = "", csrf: str = "") -> str:
 <main aria-label="Styx login">
   <form method="post" action="/login">
     <input type="hidden" name="csrf" value="{csrf_e}">
-    <div class="field">
+{next_input}    <div class="field">
       <input id="password" name="password" type="password" required autofocus
              autocomplete="current-password" aria-label="Password"
              autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go"

@@ -50,6 +50,17 @@ _LOGIN_TIMEOUT = 10.0
 _LOGIN_DELAY = 0.4
 _SESSION_CHECK_INTERVAL = 1.0
 _NO_STORE = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+_NEXT_MAX = 2048
+
+
+def _safe_next(raw: str | None) -> str:
+    """Only an internal path, no scheme-relative or backslash form, bounded."""
+    value = raw or ""
+    if len(value) > _NEXT_MAX or "\r" in value or "\n" in value:
+        return "/"
+    if not value.startswith("/") or value.startswith(("//", "/\\")):
+        return "/"
+    return value
 
 
 class _LoginLimiter:
@@ -134,11 +145,11 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         return key is not None and sessions.valid(key, connection.cookies.get(sessions.COOKIE))
 
     async def login_response(request: Request, error: str = "", status_code: int = 200, *,
-                             csrf: str | None = None) -> Response:
+                             csrf: str | None = None, next_path: str = "/") -> Response:
         csrf = csrf or sessions.new_csrf()
         compressed = accepts_gzip(request.headers.get("accept-encoding", ""))
         def render():
-            body = login_page.render(error=error, csrf=csrf).encode("utf-8")
+            body = login_page.render(error=error, csrf=csrf, next_path=next_path).encode("utf-8")
             # The form is tiny; the public painting has its own immutable URL.
             return gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
         async with render_slots:
@@ -205,12 +216,17 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         # Repeated GETs / another login tab must not invalidate an open form.
         if not re.fullmatch(r"[A-Za-z0-9_-]{32}", csrf):
             csrf = None
-        return await login_response(request, csrf=csrf)
+        return await login_response(
+            request, csrf=csrf, next_path=_safe_next(request.query_params.get("next")),
+        )
 
     async def login_post(request: Request) -> Response:
+        next_path = _safe_next(request.query_params.get("next"))
         delay = limiter.reserve()
         if delay is None:
-            resp = await login_response(request, "Too many attempts. Try again later.", 429)
+            resp = await login_response(
+                request, "Too many attempts. Try again later.", 429, next_path=next_path,
+            )
             resp.headers["Retry-After"] = str(_FAIL_WINDOW)
             return resp
         success = False
@@ -220,13 +236,21 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 async with asyncio.timeout(_LOGIN_TIMEOUT):
                     async for chunk in request.stream():
                         if len(body) + len(chunk) > _LOGIN_MAX_BYTES:
-                            return await login_response(request, "Form submission is too large.", 413)
+                            return await login_response(
+                                request, "Form submission is too large.", 413, next_path=next_path,
+                            )
                         body.extend(chunk)
                 form = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=8)
+                # The hidden field is authoritative once the form parsed.
+                next_path = _safe_next(form.get("next", [next_path])[0])
             except TimeoutError:
-                return await login_response(request, "Form submission timed out.", 408)
+                return await login_response(
+                    request, "Form submission timed out.", 408, next_path=next_path,
+                )
             except ValueError:
-                return await login_response(request, "Invalid form submission.", 400)
+                return await login_response(
+                    request, "Invalid form submission.", 400, next_path=next_path,
+                )
             csrf_form = form.get("csrf", [""])[0]
             csrf_cookie = request.cookies.get(sessions.CSRF_COOKIE) or ""
             password = form.get("password", [""])[0]
@@ -238,18 +262,20 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
                 # Keep the full backoff and pending reservation for failures,
                 # without slowing down a successfully authenticated user.
                 await asyncio.sleep(delay)
-                return await login_response(request, "Incorrect password.", 401)
+                return await login_response(
+                    request, "Incorrect password.", 401, next_path=next_path,
+                )
             # Reject a login whose password was replaced during verification.
             if passwords.read_hash(passwd_file) != stored:
                 await asyncio.sleep(delay)
-                return await login_response(request, "Please try again.", 401)
+                return await login_response(
+                    request, "Please try again.", 401, next_path=next_path,
+                )
             token = sessions.issue(sessions.password_key(secret, stored))
             success = True
         finally:
             limiter.finish(success)
-        nxt = request.query_params.get("next") or "/"
-        if not nxt.startswith("/") or nxt.startswith(("//", "/\\")):
-            nxt = "/"
+        nxt = next_path
         launch_started = time.monotonic()
         destination = urlsplit(nxt)
         root_query = dict(parse_qsl(destination.query))
@@ -267,7 +293,9 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
             except HandoffError as exc:
                 resp = HTMLResponse(str(exc), status_code=503)
             if passwords.read_hash(passwd_file) != stored:
-                return await login_response(request, "Please try again.", 401)
+                return await login_response(
+                    request, "Please try again.", 401, next_path=next_path,
+                )
             resp.headers["Server-Timing"] = f"styx-launch;dur={(time.monotonic() - launch_started) * 1000:.1f}"
         else:
             resp = RedirectResponse(nxt, status_code=303)

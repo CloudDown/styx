@@ -68,6 +68,13 @@ class LoginAndSessions(unittest.TestCase):
         self.assertNotIn("maximum-scale", html)
         self.assertNotIn("user-scalable", html)
 
+    def test_login_form_preserves_and_escapes_an_internal_next_page(self):
+        html = login_page.render(next_path="/api/profiles?tab=1")
+        self.assertIn('name="next" value="/api/profiles?tab=1"', html)
+        escaped = login_page.render(next_path='"><script>bad</script>')
+        self.assertNotIn("<script>bad</script>", escaped)
+        self.assertIn("&quot;&gt;&lt;script&gt;", escaped)
+
     def test_login_errors_and_csrf_are_escaped(self):
         html = login_page.render(error="<script>bad</script>", csrf='"><bad>')
         self.assertNotIn("<script>", html)

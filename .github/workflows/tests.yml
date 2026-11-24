@@ -3,6 +3,21 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: styx
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install lint dependency
+        run: python -m pip install "pyflakes>=3.2,<5"
+      - name: Lint undefined names and unused imports
+        working-directory: styx
+        run: python -m pyflakes backend __init__.py gate.py dashboard tests scripts
+
   test:
     strategy:
       fail-fast: false

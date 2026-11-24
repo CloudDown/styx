@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 import unittest
 import tempfile
@@ -9,7 +10,7 @@ from unittest.mock import Mock, patch
 # The portable unit suite also runs without a full Hermes checkout. Missing
 # Hermes operations must be explicitly mocked, never silently emulated.
 try:
-    import hermes_cli.config
+    importlib.import_module("hermes_cli.config")
 except ModuleNotFoundError as exc:
     if exc.name not in {"hermes_cli", "hermes_cli.config"}:
         raise

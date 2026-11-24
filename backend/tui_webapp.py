@@ -10,8 +10,6 @@ import base64
 import gzip
 import hashlib
 from functools import lru_cache
-from pathlib import Path
-
 from starlette.responses import HTMLResponse, Response
 
 from .asset_transfer import accepts_gzip

@@ -10,7 +10,7 @@ import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 

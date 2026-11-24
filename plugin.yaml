@@ -1,5 +1,5 @@
 name: styx
-version: 0.1.0
+version: 0.2.0
 description: >-
   Expose the Hermes webapp (or dashboard) as a Tor v3 onion service, behind a
   Cerberus password gate on loopback. No ports opened on the LAN or the public

@@ -63,6 +63,21 @@ class TuiSocket(unittest.TestCase):
                 self.assertIn(b"pty-ok", data)
                 # A resize frame is consumed as control, never written to the child.
                 socket.send_text('{"type":"resize","cols":120,"rows":40}')
+                # Ask the gate to hang up and wait for its close frame. Starlette's
+                # TestClient cancels the session scope on exit; without this wait a
+                # handler still unwinding can surface CancelledError on macOS.
+                socket.close()
+                with self.assertRaises(WebSocketDisconnect):
+                    socket.receive_text()
+
+    def test_terminal_start_failure_is_reported_and_the_socket_closed(self):
+        self.login()
+        with patch.object(terminal, "command", return_value=[sys.executable, "-c", "pass"]), \
+                patch.object(terminal, "Terminal", side_effect=OSError("no pty")):
+            with self.client.websocket_connect(tui_webapp.SOCKET) as socket:
+                self.assertIn("Could not start the terminal", socket.receive_text())
+                with self.assertRaises(WebSocketDisconnect):
+                    socket.receive_text()
 
     def test_unknown_assets_are_404_and_the_vendor_files_are_cached(self):
         self.login()

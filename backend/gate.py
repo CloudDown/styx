@@ -345,7 +345,7 @@ def build_app(*, data_dir, upstream_host: str, upstream_port: int, secret: bytes
         try:
             session = terminal.Terminal(argv, cwd=os.path.expanduser("~"), env=env)
         except OSError as exc:
-            _log.warning("tui: could not start the terminal: %s", exc)
+            log.warning("tui: could not start the terminal: %s", exc)
             await websocket.send_text("\r\n\x1b[31mCould not start the terminal.\x1b[0m\r\n")
             await websocket.close(code=1011)
             return

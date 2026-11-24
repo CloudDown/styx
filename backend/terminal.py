@@ -55,16 +55,31 @@ class Terminal:
 
         master, slave = os.openpty()
         try:
-            self._resize_fd(slave, cols, rows)
-            self._proc = subprocess.Popen(
-                argv, stdin=slave, stdout=slave, stderr=slave, cwd=cwd,
-                env=env or os.environ.copy(), start_new_session=True, close_fds=True,
-            )
-        finally:
-            os.close(slave)
+            try:
+                self._resize_fd(slave, cols, rows)
+                proc = subprocess.Popen(
+                    argv, stdin=slave, stdout=slave, stderr=slave, cwd=cwd,
+                    env=env or os.environ.copy(), start_new_session=True, close_fds=True,
+                )
+            finally:
+                os.close(slave)
+        except BaseException:
+            # Popen or the initial window-size ioctl failed: never leak the
+            # master side of the pair or leave a half-created session behind.
+            os.close(master)
+            raise
+        self._proc = proc
         self._fd = master
-        os.set_blocking(master, False)
-        self._loop.add_reader(master, self._readable)
+        try:
+            os.set_blocking(master, False)
+            self._loop.add_reader(master, self._readable)
+        except BaseException:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            os.close(master)
+            raise
 
     @property
     def pid(self) -> int:
